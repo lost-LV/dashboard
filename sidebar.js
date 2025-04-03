@@ -177,9 +177,16 @@ class ShortsLongsRatio {
     addVersionDisplay() {
         // Check if version information is available
         if (window.appVersion) {
+            // Remove any existing version containers first
+            const existingVersionContainers = document.querySelectorAll('.version-container');
+            existingVersionContainers.forEach(container => {
+                container.parentNode.removeChild(container);
+            });
+
             // Create version container
             const versionContainer = document.createElement('div');
             versionContainer.className = 'version-container';
+            versionContainer.id = 'version-display'; // Add ID for easier reference
 
             // Create version text
             const versionText = document.createElement('div');
