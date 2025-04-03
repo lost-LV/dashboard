@@ -23,8 +23,8 @@ class Updater {
     init() {
         console.log(`Updater initialized (current version: ${this.options.currentVersion})`);
 
-        // Add update button to UI
-        this.addUpdateButton();
+        // Don't add the button initially - only show it when an update is available
+        // this.addUpdateButton();
 
         // Check for updates on startup
         this.checkForUpdates();
@@ -36,40 +36,79 @@ class Updater {
     addUpdateButton() {
         console.log('Adding update button to DOM...');
         try {
+            // Create the button
             const button = document.createElement('button');
-            button.textContent = 'Check for Updates';
-            button.style.position = 'absolute';
-            button.style.top = '10px';
-            button.style.right = '10px';
-            button.style.padding = '5px 10px';
-            button.style.backgroundColor = '#4CAF50';
+            button.textContent = 'Update Available!';
+            button.style.width = '100%';
+            button.style.padding = '10px';
+            button.style.backgroundColor = '#FF9800'; // Orange color for update notification
             button.style.color = 'white';
             button.style.border = 'none';
             button.style.borderRadius = '4px';
             button.style.cursor = 'pointer';
-            button.style.zIndex = '9999';
+            button.style.marginTop = '15px';
+            button.style.fontWeight = 'bold';
+            button.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
 
+            // Add click event to download the update
             button.addEventListener('click', () => {
-                this.checkForUpdates(true); // Force check
+                this.downloadUpdate(); // Show update dialog
             });
 
-            if (document.body) {
-                document.body.appendChild(button);
-                console.log('Update button added successfully');
-            } else {
-                console.error('Document body not available yet');
-                // Try again after a short delay
-                setTimeout(() => {
-                    if (document.body) {
-                        document.body.appendChild(button);
-                        console.log('Update button added successfully (delayed)');
-                    } else {
-                        console.error('Document body still not available after delay');
-                    }
-                }, 500);
-            }
+            // Find the sidebar
+            const sidebar = document.getElementById('sidebar');
 
-            this.updateButton = button;
+            if (sidebar) {
+                // Create a container for the button at the bottom of the sidebar
+                const updateContainer = document.createElement('div');
+                updateContainer.style.width = 'calc(100% - 20px)';
+                updateContainer.style.padding = '10px';
+                updateContainer.style.boxSizing = 'border-box';
+                updateContainer.style.position = 'absolute';
+                updateContainer.style.bottom = '10px';
+                updateContainer.style.left = '10px';
+                updateContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
+                updateContainer.style.borderRadius = '4px';
+                updateContainer.style.borderTop = '1px solid rgba(255, 255, 255, 0.1)';
+                updateContainer.style.paddingTop = '15px';
+
+                // Add version info
+                const versionInfo = document.createElement('div');
+                versionInfo.textContent = `New version: ${this.updateInfo ? this.updateInfo.version : 'available'}`;
+                versionInfo.style.textAlign = 'center';
+                versionInfo.style.marginBottom = '5px';
+                versionInfo.style.fontSize = '12px';
+                versionInfo.style.color = '#FFF';
+
+                // Add elements to container
+                updateContainer.appendChild(versionInfo);
+                updateContainer.appendChild(button);
+
+                // Add container to sidebar
+                sidebar.appendChild(updateContainer);
+                console.log('Update button added to sidebar successfully');
+
+                // Store references
+                this.updateButton = button;
+                this.updateContainer = updateContainer;
+            } else {
+                console.error('Sidebar element not found');
+                // Fallback to body if sidebar not found
+                if (document.body) {
+                    // Create a floating button in the corner as fallback
+                    button.style.position = 'absolute';
+                    button.style.bottom = '10px';
+                    button.style.right = '10px';
+                    button.style.zIndex = '9999';
+                    button.style.width = 'auto';
+
+                    document.body.appendChild(button);
+                    console.log('Update button added to body as fallback');
+                    this.updateButton = button;
+                } else {
+                    console.error('Document body not available yet');
+                }
+            }
         } catch (error) {
             console.error('Error adding update button:', error);
         }
@@ -132,52 +171,33 @@ class Updater {
                 // Notify about update
                 this.options.onUpdateAvailable(this.updateInfo);
 
+                // Show the update button if it doesn't exist yet
+                if (!this.updateButton) {
+                    this.addUpdateButton();
+                } else if (this.updateContainer) {
+                    // Update version info if button already exists
+                    const versionInfo = this.updateContainer.querySelector('div');
+                    if (versionInfo) {
+                        versionInfo.textContent = `New version: ${this.updateInfo.version}`;
+                    }
+                }
+
                 // Auto-download if enabled
                 if (this.options.autoDownload) {
                     this.downloadUpdate();
-                }
-
-                // Update button state
-                if (this.updateButton) {
-                    this.updateButton.textContent = 'Update Available!';
-                    this.updateButton.style.backgroundColor = '#FF9800';
-                    this.updateButton.disabled = false;
                 }
             } else {
                 // No update needed
                 console.log('You have the latest version.');
 
-                // Update button state
-                if (this.updateButton) {
-                    this.updateButton.textContent = 'Up to Date';
-                    this.updateButton.style.backgroundColor = '#4CAF50';
-                    this.updateButton.disabled = false;
-
-                    // Reset button after 3 seconds
-                    setTimeout(() => {
-                        if (this.updateButton) {
-                            this.updateButton.textContent = 'Check for Updates';
-                        }
-                    }, 3000);
-                }
+                // If we already have an update button showing, don't remove it
+                // This ensures the button stays visible once an update is detected
             }
         } catch (error) {
             this.options.onError(error);
 
-            // Update button state
-            if (this.updateButton) {
-                this.updateButton.textContent = 'Check Failed';
-                this.updateButton.style.backgroundColor = '#F44336';
-                this.updateButton.disabled = false;
-
-                // Reset button after 3 seconds
-                setTimeout(() => {
-                    if (this.updateButton) {
-                        this.updateButton.textContent = 'Check for Updates';
-                        this.updateButton.style.backgroundColor = '#4CAF50';
-                    }
-                }, 3000);
-            }
+            // Don't show or update the button on error
+            // We only want to show the button when an update is available
         } finally {
             this.isChecking = false;
         }

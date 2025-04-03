@@ -9,6 +9,7 @@
     flex-direction: column;
     border-right: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 2px 0 5px rgba(0, 0, 0, 0.2);
+    position: relative; /* For absolute positioning of children */
 }
 
 .sidebar-header {
