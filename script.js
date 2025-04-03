@@ -319,12 +319,33 @@ function addVwapToggleButton() {
     button.style.width = '80px'; // Smaller width
     button.style.padding = '5px'; // Smaller padding
     button.style.fontSize = '10px'; // Smaller text
-    button.style.backgroundColor = getColor('buttons', '#9c27b0'); // Use custom color for VWAP button
+    button.style.backgroundColor = '#2196F3'; // Blue color to match other buttons
     button.style.color = '#ffffff';
     button.style.border = 'none';
     button.style.borderRadius = '5px';
     button.style.cursor = 'pointer';
     button.style.zIndex = '1000';
+    button.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)';
+    button.style.transition = 'background-color 0.2s, transform 0.1s';
+
+    // Add hover effect
+    button.addEventListener('mouseover', () => {
+        button.style.backgroundColor = '#1976D2'; // Darker blue on hover
+    });
+
+    button.addEventListener('mouseout', () => {
+        button.style.backgroundColor = '#2196F3'; // Back to original blue
+        updateVwapButtonAppearance(button); // Make sure we respect the VWAP toggle state
+    });
+
+    // Add active effect
+    button.addEventListener('mousedown', () => {
+        button.style.transform = 'scale(0.95)';
+    });
+
+    button.addEventListener('mouseup', () => {
+        button.style.transform = 'scale(1)';
+    });
 
     // Update button appearance based on current state
     updateVwapButtonAppearance(button);
@@ -405,14 +426,34 @@ function addSidebarToggleButton() {
     });
 
     document.body.appendChild(button);
+
+    // Add "made by lost" text above the buttons
+    addMadeByText();
+}
+
+function addMadeByText() {
+    const madeByText = document.createElement('div');
+    madeByText.textContent = 'made by lost';
+    madeByText.style.position = 'absolute';
+    madeByText.style.bottom = '55px'; // Position above the buttons
+    madeByText.style.left = '50%';
+    madeByText.style.transform = 'translateX(-50%)';
+    madeByText.style.fontSize = '10px';
+    madeByText.style.color = 'rgba(255, 255, 255, 0.5)';
+    madeByText.style.fontStyle = 'italic';
+    madeByText.style.textAlign = 'center';
+    madeByText.style.width = '100px';
+    madeByText.style.zIndex = '1000';
+
+    document.body.appendChild(madeByText);
 }
 
 function updateVwapButtonAppearance(button) {
     if (isVwapVisible) {
-        button.style.backgroundColor = '#9c27b0'; // Purple color when VWAP is visible
+        button.style.backgroundColor = '#2196F3'; // Blue color when VWAP is visible
         button.style.opacity = '1';
     } else {
-        button.style.backgroundColor = '#9c27b0'; // Same color but more transparent when VWAP is hidden
+        button.style.backgroundColor = '#2196F3'; // Same color but more transparent when VWAP is hidden
         button.style.opacity = '0.6';
     }
 }
