@@ -222,6 +222,10 @@ class WebSocketManager {
 const bybitWsManager = new WebSocketManager('wss://stream.bybit.com/v5/public/spot', 'bybit', 'charts');
 const bitstampWsManager = new WebSocketManager('wss://ws.bitstamp.net', 'bitstamp', 'orderbooks');
 
+// Make WebSocket managers available globally
+window.bybitWsManager = bybitWsManager;
+window.bitstampWsManager = bitstampWsManager;
+
 // --- Helper Functions ---
 // Throttle function to limit how often a function can be called
 function throttle(func, limit) {
@@ -482,6 +486,15 @@ function fetchHistoricalData() {
 function setupWebSockets() {
     // Create a throttled version of drawChart for price updates
     const throttledPriceUpdate = throttle(drawChart, 50); // Update at most every 50ms for price (more frequent than orderbook)
+
+    // Initialize the sidebar after WebSocket managers are available
+    if (typeof ShortsLongsRatio === 'function') {
+        window.shortsLongsRatio = new ShortsLongsRatio();
+        window.shortsLongsRatio.init();
+        console.log('Shorts vs Longs ratio sidebar initialized');
+    } else {
+        console.error('ShortsLongsRatio class not available');
+    }
 
     bybitWsManager.subscribe('kline.5.BTCUSDT', (data) => {
         // Log first successful data reception
@@ -2195,21 +2208,27 @@ if (document.readyState === 'loading') {
 } else {
     initializeChart();
 
-    // Initialize the auto-updater
-    if (window.Updater && window.appVersion) {
-        const updater = new Updater({
-            repoOwner: 'your-github-username', // Replace with your GitHub username
-            repoName: 'btc-chart-app',        // Replace with your repository name
-            currentVersion: window.appVersion.version,
-            checkInterval: 3600000, // Check for updates every hour
-            onUpdateAvailable: (updateInfo) => {
-                console.log(`New version available: ${updateInfo.version}`);
-                // You can add custom notification logic here
-            }
-        });
+    // Initialize the auto-updater after a short delay to ensure DOM is ready
+    setTimeout(() => {
+        if (window.Updater && window.appVersion) {
+            console.log('Initializing auto-updater...');
+            const updater = new window.Updater({
+                repoOwner: 'lost-LV', // Replace with your GitHub username
+                repoName: 'dashboard',        // Replace with your repository name
+                currentVersion: window.appVersion.version,
+                checkInterval: 3600000, // Check for updates every hour
+                onUpdateAvailable: (updateInfo) => {
+                    console.log(`New version available: ${updateInfo.version}`);
+                    // You can add custom notification logic here
+                }
+            });
 
-        // Make updater available globally
-        window.appUpdater = updater;
-    }
+            // Make updater available globally
+            window.appUpdater = updater;
+            console.log('Auto-updater initialized successfully');
+        } else {
+            console.error('Updater or appVersion not available');
+        }
+    }, 1000); // Wait 1 second after page load
 }
 })();
