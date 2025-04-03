@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BTC/USDT: Loading...</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+    <div id="container">
+        <div id="sidebar">
+            <div class="sidebar-header">Longs vs shorts</div>
+            <div class="ratio-container">
+                <div class="ratio-label">Imbalance:</div>
+                <div id="imbalance">Loading...</div>
+            </div>
+            <div class="bar-container">
+                <div id="longs-bar" class="ratio-bar"></div>
+                <div id="shorts-bar" class="ratio-bar"></div>
+            </div>
+            <div class="labels-container">
+                <div class="label longs-label">Longs</div>
+                <div class="label shorts-label">Shorts</div>
+            </div>
+            <div class="percentages-container">
+                <div class="percentage-item">
+                    <div class="percentage-label longs-label">Longs %:</div>
+                    <div id="longs-percentage" class="percentage-value">0%</div>
+                </div>
+                <div class="percentage-item">
+                    <div class="percentage-label shorts-label">Shorts %:</div>
+                    <div id="shorts-percentage" class="percentage-value">0%</div>
+                </div>
+                <div class="percentage-item">
+                    <div class="percentage-label">Imbalance:</div>
+                    <div id="imbalance-usd" class="percentage-value">$0</div>
+                </div>
+                <div class="percentage-item">
+                    <div class="percentage-label">Imbalance BTC:</div>
+                    <div id="imbalance-btc" class="percentage-value">0</div>
+                </div>
+            </div>
+            <div class="stats-container">
+                <div class="stat-item">
+                    <div class="stat-label">Total BTC:</div>
+                    <div id="total-volume" class="stat-value">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Total $:</div>
+                    <div id="total-usd" class="stat-value">$0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Longs BTC:</div>
+                    <div id="longs-volume" class="stat-value">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Longs $:</div>
+                    <div id="longs-usd" class="stat-value">$0</div>
+                </div>
+
+                <div class="stat-item">
+                    <div class="stat-label">Shorts BTC:</div>
+                    <div id="shorts-volume" class="stat-value">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Shorts $:</div>
+                    <div id="shorts-usd" class="stat-value">$0</div>
+                </div>
+
+
+            </div>
+        </div>
+        <canvas id="chart"></canvas>
+    </div>
+    <script src="websocket-manager.js"></script>
+    <script src="liquidations.js"></script>
+    <script src="color-customizer.js"></script>
+    <script src="sidebar.js"></script>
+    <script src="version.js"></script>
+    <script src="updater.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
