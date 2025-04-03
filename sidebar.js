@@ -28,6 +28,9 @@ class ShortsLongsRatio {
         // Initialize
         this.init();
 
+        // Add version display
+        this.addVersionDisplay();
+
         // Apply initial colors
         this.applyColors();
 
@@ -169,6 +172,32 @@ class ShortsLongsRatio {
 
         // Refresh the display with new colors
         this.updateSidebar();
+    }
+
+    addVersionDisplay() {
+        // Check if version information is available
+        if (window.appVersion) {
+            // Create version container
+            const versionContainer = document.createElement('div');
+            versionContainer.className = 'version-container';
+
+            // Create version text
+            const versionText = document.createElement('div');
+            versionText.textContent = `v${window.appVersion.version}`;
+
+            // Add version text to container
+            versionContainer.appendChild(versionText);
+
+            // Add container to sidebar
+            this.sidebar.appendChild(versionContainer);
+
+            // Store reference
+            this.versionContainer = versionContainer;
+
+            console.log(`Version display added: ${window.appVersion.version}`);
+        } else {
+            console.warn('App version information not available');
+        }
     }
 }
 
