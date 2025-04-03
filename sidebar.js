@@ -188,9 +188,12 @@ class ShortsLongsRatio {
             versionContainer.className = 'version-container';
             versionContainer.id = 'version-display'; // Add ID for easier reference
 
-            // Create version text
+            // Create version text with enhanced styling
             const versionText = document.createElement('div');
             versionText.textContent = `v${window.appVersion.version}`;
+            versionText.style.fontFamily = 'Arial, sans-serif';
+            versionText.style.fontWeight = 'bold';
+            versionText.style.letterSpacing = '0.5px';
 
             // Add version text to container
             versionContainer.appendChild(versionText);
