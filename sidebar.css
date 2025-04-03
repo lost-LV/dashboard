@@ -98,6 +98,7 @@
 
 .stats-container {
     margin-top: 10px;
+    margin-bottom: 25px; /* Add space for version display */
 }
 
 .stat-item {
@@ -113,6 +114,21 @@
 
 .stat-value {
     font-weight: bold;
+}
+
+/* Version display at the bottom of the sidebar */
+.version-container {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.5);
+    padding: 5px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background-color: rgba(31, 41, 55, 0.95); /* Match sidebar background */
+    z-index: 10; /* Ensure it's above other elements */
 }
 
 /* Make the sidebar responsive */
