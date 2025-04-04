@@ -101,16 +101,28 @@ class WebSocketManager {
 
     unsubscribe(channel, handler) {
         if (this.handlers[channel]) {
-            this.handlers[channel] = this.handlers[channel].filter(h => h !== handler);
-            if (this.handlers[channel].length === 0) {
-                delete this.handlers[channel];
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    const message = this.exchange === 'bitstamp'
-                        ? { event: 'bts:unsubscribe', data: { channel } }
-                        : { op: 'unsubscribe', args: [channel] };
-                    this.ws.send(JSON.stringify(message));
+            if (handler) {
+                // If a specific handler is provided, only remove that handler
+                this.handlers[channel] = this.handlers[channel].filter(h => h !== handler);
+                if (this.handlers[channel].length === 0) {
+                    delete this.handlers[channel];
+                    this.sendUnsubscribeMessage(channel);
                 }
+            } else {
+                // If no handler is provided, remove all handlers for this channel
+                delete this.handlers[channel];
+                this.sendUnsubscribeMessage(channel);
             }
+        }
+    }
+
+    sendUnsubscribeMessage(channel) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            const message = this.exchange === 'bitstamp'
+                ? { event: 'bts:unsubscribe', data: { channel } }
+                : { op: 'unsubscribe', args: [channel] };
+            this.ws.send(JSON.stringify(message));
+            console.log(`Unsubscribed from ${this.exchange} channel: ${channel}`);
         }
     }
 

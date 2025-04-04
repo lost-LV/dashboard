@@ -9,6 +9,7 @@
 </head>
 <body>
     <div id="container">
+        <div id="coin-indicator"></div>
         <div id="sidebar">
             <div class="sidebar-header">Longs vs shorts</div>
             <div class="ratio-container">
@@ -37,13 +38,13 @@
                     <div id="imbalance-usd" class="percentage-value">$0</div>
                 </div>
                 <div class="percentage-item">
-                    <div class="percentage-label">Imbalance BTC:</div>
+                    <div class="percentage-label" id="imbalance-coin-label">Imbalance BTC:</div>
                     <div id="imbalance-btc" class="percentage-value">0</div>
                 </div>
             </div>
             <div class="stats-container">
                 <div class="stat-item">
-                    <div class="stat-label">Total BTC:</div>
+                    <div class="stat-label" id="total-coin-label">Total BTC:</div>
                     <div id="total-volume" class="stat-value">0</div>
                 </div>
                 <div class="stat-item">
@@ -51,7 +52,7 @@
                     <div id="total-usd" class="stat-value">$0</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-label">Longs BTC:</div>
+                    <div class="stat-label" id="longs-coin-label">Longs BTC:</div>
                     <div id="longs-volume" class="stat-value">0</div>
                 </div>
                 <div class="stat-item">
@@ -60,7 +61,7 @@
                 </div>
 
                 <div class="stat-item">
-                    <div class="stat-label">Shorts BTC:</div>
+                    <div class="stat-label" id="shorts-coin-label">Shorts BTC:</div>
                     <div id="shorts-volume" class="stat-value">0</div>
                 </div>
                 <div class="stat-item">
@@ -73,14 +74,17 @@
         </div>
         <canvas id="chart"></canvas>
     </div>
+    <script src="dom-utils.js"></script>
     <script src="websocket-manager.js"></script>
+    <script src="coin-manager.js"></script>
     <script src="liquidations.js"></script>
-    <script src="color-customizer.js"></script>
+    <script src="color-customizer-new.js"></script>
     <script src="sidebar.js"></script>
     <script src="version.js"></script>
     <script src="updater.js"></script>
     <script src="init-updater.js"></script>
     <script src="script.js"></script>
+    <script src="coin-indicator.js"></script>
     <script src="test-updater.js"></script>
 </body>
 </html>

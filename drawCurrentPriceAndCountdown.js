@@ -32,10 +32,10 @@ function drawCurrentPriceAndCountdown() {
     // Get color based on price movement
     const prevBar = bars.length > 1 ? bars[bars.length - 2] : null;
     const priceChange = prevBar ? currentPrice - prevBar.close : 0;
-    const priceColor = priceChange >= 0 ? 
-        getColor('bullishCandle', '#26a69a') : // Green for up
-        getColor('bearishCandle', '#ef5350'); // Red for down
-    
+    const priceColor = priceChange >= 0 ?
+        getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a')) : // Green for up
+        getColor('bearishCandleBody', getColor('bearishCandle', '#ef5350')); // Red for down
+
     // Draw price tag background
     ctx.fillStyle = priceColor;
     ctx.fillRect(priceTagX - priceTagWidth / 2, adjustedPriceTagY, priceTagWidth, priceTagHeight);

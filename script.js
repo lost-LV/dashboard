@@ -36,8 +36,18 @@ function isBrightColor(color) {
 // Data storage
 let bars = [];
 let orderbook = { bids: [], asks: [] };
+let bidAskTags = [];
+
+// Price variables for different coins
 let btcPrice = 0;
+let ethPrice = 0;
+let solPrice = 0;
+let ltcPrice = 0;
+
 let currentPriceY = null; // Y position of current price for price tag
+
+// Current trading pair
+let currentPair = window.coinManager ? window.coinManager.getCurrentCoin().bybitSymbol : 'BTCUSDT';
 
 // Bar interval and countdown
 const barIntervalMs = 300000; // 5 minute bars (5 * 60 * 1000 ms)
@@ -74,7 +84,7 @@ let vwapData = {
 // Previous day's VWAP data removed
 
 // VWAP visibility toggle
-let isVwapVisible = true;
+let isVwapVisible = localStorage.getItem('isVwapVisible') !== 'false'; // Default to true if not set
 
 // Volume Profile removed
 
@@ -270,28 +280,50 @@ function resizeCanvas() {
 function updateTitle() {
     if (bars.length > 0) {
         const currentPrice = bars[bars.length - 1].close;
-        btcPrice = currentPrice;
-        document.title = `${currentPrice.toFixed(2)}`;
+
+        // Get current coin info
+        if (window.coinManager) {
+            const coin = window.coinManager.getCurrentCoin();
+            const coinSymbol = coin.symbol.toLowerCase();
+            window[`${coinSymbol}Price`] = currentPrice;
+
+            // Format price according to coin's precision
+            const formattedPrice = currentPrice.toFixed(coin.pricePrecision);
+            document.title = `${coin.symbol}/USDT: ${formattedPrice}`;
+        } else {
+            btcPrice = currentPrice;
+            document.title = `BTC/USDT: ${currentPrice.toFixed(2)}`;
+        }
     }
 }
 
 function addResetPriceScaleButton() {
+    // Create the button directly without using DOM utilities
     const button = document.createElement('button');
-    button.textContent = 'Reset Zoom'; // Full text with smaller font
+    button.textContent = 'Reset Zoom';
     button.style.position = 'absolute';
-    button.style.bottom = '0px'; // Position at the very bottom of the screen
-    button.style.right = '0px'; // Position at the very right of the screen
-    button.style.width = priceScaleWidth + 'px'; // Width matches the price scale width
-    button.style.height = timeScaleHeight + 'px'; // Height matches the time scale height
-    button.style.padding = '0px'; // No padding
-    button.style.fontSize = '8px'; // Very small font
-    button.style.lineHeight = timeScaleHeight + 'px'; // Center text vertically to match time scale height
+    button.style.bottom = '0px';
+    button.style.right = '0px';
+    button.style.width = priceScaleWidth + 'px';
+    button.style.height = timeScaleHeight + 'px';
+    button.style.padding = '0px';
+    button.style.fontSize = '8px';
+    button.style.lineHeight = timeScaleHeight + 'px';
     button.style.backgroundColor = '#26a69a';
     button.style.color = '#ffffff';
     button.style.border = 'none';
-    button.style.borderRadius = '0px'; // No rounded corners to fit perfectly in the corner
+    button.style.borderRadius = '0px';
     button.style.cursor = 'pointer';
     button.style.zIndex = '1000';
+
+    // Add hover effects
+    button.addEventListener('mouseenter', () => {
+        button.style.opacity = '1';
+    });
+
+    button.addEventListener('mouseleave', () => {
+        button.style.opacity = '0.8';
+    });
 
     button.addEventListener('click', () => {
         // Force a complete reset of the price scale
@@ -318,35 +350,353 @@ function addResetPriceScaleButton() {
     addVwapToggleButton();
 }
 
+// Debounce function to prevent rapid coin switching
+const debounce = (func, delay) => {
+    let timeout;
+    return function(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), delay);
+    };
+};
+
+// Handle coin change event
+function handleCoinChange(coin) {
+    console.log(`Chart handling coin change to ${coin.symbol}`);
+
+    // Update current pair
+    currentPair = coin.bybitSymbol;
+
+    // Force immediate update of the coin indicator if the function exists
+    if (typeof drawCoinIndicator === 'function') {
+        drawCoinIndicator();
+    }
+
+    // Update document title
+    updateTitle();
+
+    // Clear existing bid/ask tags
+    bidAskTags = [];
+
+    // Clear existing orderbook data
+    orderbook = { bids: [], asks: [] };
+
+    // Ensure the sidebar is updated with the new coin
+    if (window.shortsLongsRatio) {
+        window.shortsLongsRatio.handleCoinChange(coin);
+    }
+
+    // Force a chart redraw to ensure the coin indicator is visible if the function exists
+    if (typeof drawChart === 'function') {
+        drawChart();
+    }
+
+    // Unsubscribe from old WebSocket channels
+    if (window.bybitWsManager) {
+        // Unsubscribe from all kline channels
+        Object.values(window.coinManager.coins).forEach(c => {
+            const channel = `kline.5.${c.bybitSymbol}`;
+            window.bybitWsManager.unsubscribe(channel);
+        });
+
+        // Subscribe to new kline channel
+        const newKlineChannel = `kline.5.${coin.bybitSymbol}`;
+        console.log(`Subscribing to new Bybit channel: ${newKlineChannel}`);
+        window.bybitWsManager.subscribe(newKlineChannel, (data) => {
+            if (data.topic && data.data && data.data.length > 0) {
+                const bar = data.data[0];
+                const newBar = {
+                    time: parseInt(bar.start),
+                    open: parseFloat(bar.open),
+                    high: parseFloat(bar.high),
+                    low: parseFloat(bar.low),
+                    close: parseFloat(bar.close)
+                };
+
+                // Process the new bar as in setupWebSockets
+                processNewBar(newBar);
+            }
+        });
+    }
+
+    // Unsubscribe from old Bitstamp orderbook channels
+    if (window.bitstampWsManager) {
+        // Unsubscribe from all orderbook channels
+        Object.values(window.coinManager.coins).forEach(c => {
+            const channel = `order_book_${c.bitstampSymbol}`;
+            window.bitstampWsManager.unsubscribe(channel);
+        });
+
+        // Subscribe to new orderbook channel
+        const newOrderBookChannel = `order_book_${coin.bitstampSymbol}`;
+        console.log(`Subscribing to new Bitstamp channel: ${newOrderBookChannel}`);
+        window.bitstampWsManager.subscribe(newOrderBookChannel, handleBitstampOrderbook);
+    }
+
+    // Reset chart data
+    bars = [];
+    orderbook = { bids: [], asks: [] };
+
+    // Reset price scale
+    isPriceScaleManuallySet = false;
+    minPrice = 0;
+    maxPrice = 100000;
+
+    // Clear any existing bid/ask tags
+    if (window.bidAskTags) {
+        window.bidAskTags = [];
+    }
+
+    // Reset VWAP
+    initializeVwapPeriod();
+
+    // Fetch new historical data
+    fetchHistoricalData();
+
+    // Update title
+    updateTitle();
+}
+
+// Helper function to process new bars (used by both WebSocket and coin change)
+const processNewBar = function(newBar) {
+    // Find the index where this bar should be inserted or updated
+    const existingBarIndex = bars.findIndex(b => b.time === newBar.time);
+
+    if (existingBarIndex >= 0) {
+        // Update existing bar
+        bars[existingBarIndex] = newBar;
+    } else {
+        // Insert new bar (maintaining chronological order)
+        let insertIndex = bars.length;
+        for (let i = bars.length - 1; i >= 0; i--) {
+            if (bars[i].time < newBar.time) {
+                insertIndex = i + 1;
+                break;
+            }
+        }
+        bars.splice(insertIndex, 0, newBar);
+    }
+
+    // Determine if this is the current interval bar
+    const now = new Date();
+    const intervalStart = new Date(now);
+    const minutes = intervalStart.getMinutes();
+    const currentFiveMinInterval = Math.floor(minutes / 5) * 5;
+    intervalStart.setMinutes(currentFiveMinInterval);
+    intervalStart.setSeconds(0);
+    intervalStart.setMilliseconds(0);
+
+    const currentIntervalStart = intervalStart.getTime();
+    const isCurrentIntervalBar = newBar.time === currentIntervalStart;
+
+    // Only update VWAP for historical bars (never for the current interval bar)
+    if (!isCurrentIntervalBar) {
+        updateVwap(newBar, true);  // Historical bars are closed
+    }
+
+    // Update title and redraw chart
+    updateTitle();
+    drawChart();
+}
+
+// Handler for Bitstamp orderbook data
+function handleBitstampOrderbook(data) {
+    // Get current coin for logging
+    const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+
+    // Log first successful data reception
+    if (!window.bitstampConnected && data.event === 'data' && data.data) {
+        console.log(`✅ Bitstamp WebSocket connected and receiving ${currentCoin} data`);
+        window.bitstampConnected = true;
+    }
+
+    // Log subscription events
+    if (data.event === 'bts:subscription_succeeded') {
+        console.log(`Successfully subscribed to ${currentCoin} orderbook channel`);
+    } else if (data.event === 'bts:error') {
+        console.error(`Error in ${currentCoin} orderbook subscription:`, data);
+    }
+
+    if (data.event === 'data' && data.data && data.data.bids && data.data.asks) {
+        try {
+            // Get current coin symbol for logging
+            const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+            console.log(`Processing ${currentCoin} orderbook data with ${data.data.bids.length} bids and ${data.data.asks.length} asks`);
+
+            const rawBids = data.data.bids;
+            const rawAsks = data.data.asks;
+            const currentPrice = bars.length > 0 ? bars[bars.length - 1].close : 0;
+            if (currentPrice === 0) {
+                console.log(`Skipping orderbook update for ${currentCoin} because currentPrice is 0`);
+                return;
+            }
+
+            // Store price in the appropriate variable based on current coin
+            if (window.coinManager) {
+                const coinSymbol = window.coinManager.getCurrentCoin().symbol.toLowerCase();
+                window[`${coinSymbol}Price`] = currentPrice;
+            } else {
+                btcPrice = currentPrice; // Fallback to BTC
+            }
+
+            // Clear existing orderbook data
+            orderbook.bids = [];
+            orderbook.asks = [];
+
+            // Get coin-specific minimum dollar value threshold
+            let minDollarValue = 400000; // Default for BTC (400k USD)
+
+            // Use different thresholds for different coins
+            if (window.coinManager) {
+                const currentCoin = window.coinManager.getCurrentCoin().symbol;
+                if (currentCoin === 'ETH') {
+                    minDollarValue = 200000; // 200k USD for Ethereum
+                } else if (currentCoin === 'SOL') {
+                    minDollarValue = 100000; // 100k USD for Solana
+                } else if (currentCoin === 'LTC') {
+                    minDollarValue = 75000; // 75k USD for Litecoin
+                }
+            }
+
+            // Process bids - convert to USD value based on current coin's price
+            for (let i = 0; i < rawBids.length; i++) {
+                const order = rawBids[i];
+                const price = parseFloat(order[0]);
+                const size = parseFloat(order[1]);
+
+                // Calculate dollar value based on the current coin
+                let dollarValue;
+                if (window.coinManager) {
+                    // Use the coin's price for conversion
+                    dollarValue = price * size;
+                } else {
+                    // Fallback to BTC calculation
+                    dollarValue = price * size;
+                }
+
+                // Only add orders above the threshold
+                if (dollarValue >= minDollarValue) {
+                    orderbook.bids.push([price, size, dollarValue]);
+                }
+            }
+
+            // Process asks - convert to USD value based on current coin's price
+            for (let i = 0; i < rawAsks.length; i++) {
+                const order = rawAsks[i];
+                const price = parseFloat(order[0]);
+                const size = parseFloat(order[1]);
+
+                // Calculate dollar value based on the current coin
+                let dollarValue;
+                if (window.coinManager) {
+                    // Use the coin's price for conversion
+                    dollarValue = price * size;
+                } else {
+                    // Fallback to BTC calculation
+                    dollarValue = price * size;
+                }
+
+                // Only add orders above the threshold
+                if (dollarValue >= minDollarValue) {
+                    orderbook.asks.push([price, size, dollarValue]);
+                }
+            }
+
+            // Sort bids by dollar value (descending)
+            orderbook.bids.sort((a, b) => b[2] - a[2]);
+
+            // Sort asks by dollar value (descending)
+            orderbook.asks.sort((a, b) => b[2] - a[2]);
+
+            // Limit to top 10 bids and 10 asks by dollar value
+            orderbook.bids = orderbook.bids.slice(0, 10);
+            orderbook.asks = orderbook.asks.slice(0, 10);
+
+            // Now sort bids by price (descending) and asks by price (ascending) for display
+            orderbook.bids.sort((a, b) => b[0] - a[0]);
+            orderbook.asks.sort((a, b) => a[0] - b[0]);
+
+            // Update the shorts vs longs ratio sidebar if it exists
+            if (window.shortsLongsRatio && typeof window.shortsLongsRatio.handleOrderbookUpdate === 'function') {
+                window.shortsLongsRatio.handleOrderbookUpdate(data);
+            }
+
+            // Log the number of filtered orders
+            console.log(`Processed orderbook: ${orderbook.bids.length} bids, ${orderbook.asks.length} asks above ${minDollarValue} USD`);
+
+            // Use throttled version of drawChart for better performance
+            throttledDrawChart();
+        } catch (error) {
+            console.error('Error processing orderbook data:', error);
+        }
+    }
+}
+
+// Helper function to find significant price levels (kept for reference but not used)
+function findSignificantLevels(orders, isBid) {
+    if (!orders || orders.length === 0) return [];
+
+    // Sort by price (ascending for asks, descending for bids)
+    const sortedOrders = [...orders].sort((a, b) => {
+        return isBid ? b[0] - a[0] : a[0] - b[0];
+    });
+
+    // For bids, we want the highest prices (which are already at the beginning after sorting)
+    // For asks, we want the lowest prices (which are already at the beginning after sorting)
+
+    // Get coin-specific minimum dollar value threshold
+    let minDollarValue = 400000; // Default for BTC (400k USD)
+
+    // Use different thresholds for different coins
+    if (window.coinManager) {
+        const currentCoin = window.coinManager.getCurrentCoin().symbol;
+        if (currentCoin === 'ETH') {
+            minDollarValue = 200000; // 200k USD for Ethereum
+        } else if (currentCoin === 'SOL') {
+            minDollarValue = 100000; // 100k USD for Solana
+        } else if (currentCoin === 'LTC') {
+            minDollarValue = 75000; // 75k USD for Litecoin
+        }
+    }
+
+    const filteredOrders = sortedOrders.filter(order => order[2] >= minDollarValue);
+
+    // Take the top orders (up to 3)
+    return filteredOrders.slice(0, 3);
+}
+
+// Test liquidations button removed
+function addTestLiquidationsButton() {
+    // Function kept empty to avoid breaking any references
+    console.log('Test liquidations functionality removed');
+}
+
 function addVwapToggleButton() {
+    // Create the button directly without using DOM utilities
     const button = document.createElement('button');
     button.textContent = 'Toggle VWAP';
     button.style.position = 'absolute';
-    button.style.bottom = '35px'; // Move up to avoid timescale
-    button.style.left = 'calc(50% - 120px)'; // Fixed position for consistent layout
-    button.style.width = '80px'; // Fixed width
-    button.style.padding = '5px'; // Fixed padding
-    button.style.fontSize = '10px'; // Fixed text size
-    button.style.backgroundColor = '#2196F3'; // Blue color to match other buttons
+    button.style.bottom = '35px';
+    button.style.left = 'calc(50% - 120px)';
+    button.style.width = '80px';
+    button.style.padding = '5px';
+    button.style.fontSize = '10px';
+    button.style.backgroundColor = '#2196F3';
     button.style.color = '#ffffff';
     button.style.border = 'none';
     button.style.borderRadius = '5px';
     button.style.cursor = 'pointer';
     button.style.zIndex = '1000';
-    button.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)';
-    button.style.transition = 'background-color 0.2s, transform 0.1s';
+    button.style.opacity = isVwapVisible ? '1' : '0.6';
 
-    // Add hover effect
-    button.addEventListener('mouseover', () => {
-        button.style.backgroundColor = '#1976D2'; // Darker blue on hover
+    // Add hover effects
+    button.addEventListener('mouseenter', () => {
+        button.style.backgroundColor = '#0b7dda';
     });
 
-    button.addEventListener('mouseout', () => {
-        button.style.backgroundColor = '#2196F3'; // Back to original blue
-        updateVwapButtonAppearance(button); // Make sure we respect the VWAP toggle state
+    button.addEventListener('mouseleave', () => {
+        button.style.backgroundColor = '#2196F3';
     });
 
-    // Add active effect
     button.addEventListener('mousedown', () => {
         button.style.transform = 'scale(0.95)';
     });
@@ -355,17 +705,11 @@ function addVwapToggleButton() {
         button.style.transform = 'scale(1)';
     });
 
-    // Update button appearance based on current state
-    updateVwapButtonAppearance(button);
-
     button.addEventListener('click', () => {
         // Toggle VWAP visibility
         isVwapVisible = !isVwapVisible;
-
-        // Update button appearance
-        updateVwapButtonAppearance(button);
-
-        // Redraw chart
+        localStorage.setItem('isVwapVisible', isVwapVisible);
+        button.style.opacity = isVwapVisible ? '1' : '0.6';
         drawChart();
     });
 
@@ -378,36 +722,41 @@ function addVwapToggleButton() {
 // Volume Profile toggle button removed
 
 function addSidebarToggleButton() {
+    // Get initial sidebar visibility state
+    let isSidebarVisible = localStorage.getItem('isSidebarVisible') !== 'false'; // Default to true if not set
+
+    // Apply the saved state immediately
+    const sidebar = document.getElementById('sidebar');
+    if (!isSidebarVisible) {
+        sidebar.style.display = 'none';
+    }
+
+    // Create the button directly without using DOM utilities
     const button = document.createElement('button');
     button.textContent = 'Toggle Sidebar';
     button.style.position = 'absolute';
-    button.style.bottom = '35px'; // Move up to avoid timescale
-    button.style.left = 'calc(50% + 40px)'; // Fixed position for consistent layout
-    button.style.width = '80px'; // Fixed width
-    button.style.padding = '5px'; // Fixed padding
-    button.style.fontSize = '10px'; // Fixed text size
-    button.style.backgroundColor = '#2196F3'; // Blue color for sidebar toggle
+    button.style.bottom = '35px';
+    button.style.left = 'calc(50% + 40px)';
+    button.style.width = '80px';
+    button.style.padding = '5px';
+    button.style.fontSize = '10px';
+    button.style.backgroundColor = '#2196F3';
     button.style.color = '#ffffff';
     button.style.border = 'none';
     button.style.borderRadius = '5px';
     button.style.cursor = 'pointer';
     button.style.zIndex = '1000';
-    button.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)';
-    button.style.transition = 'background-color 0.2s, transform 0.1s';
+    button.style.opacity = isSidebarVisible ? '1' : '0.6';
 
-    // Track sidebar visibility state
-    let isSidebarVisible = true;
-
-    // Add hover effect
-    button.addEventListener('mouseover', () => {
-        button.style.backgroundColor = '#1976D2';
+    // Add hover effects
+    button.addEventListener('mouseenter', () => {
+        button.style.backgroundColor = '#0b7dda';
     });
 
-    button.addEventListener('mouseout', () => {
+    button.addEventListener('mouseleave', () => {
         button.style.backgroundColor = '#2196F3';
     });
 
-    // Add active effect
     button.addEventListener('mousedown', () => {
         button.style.transform = 'scale(0.95)';
     });
@@ -418,8 +767,8 @@ function addSidebarToggleButton() {
 
     button.addEventListener('click', () => {
         // Toggle sidebar visibility
-        const sidebar = document.getElementById('sidebar');
         isSidebarVisible = !isSidebarVisible;
+        localStorage.setItem('isSidebarVisible', isSidebarVisible);
 
         if (isSidebarVisible) {
             sidebar.style.display = 'flex';
@@ -429,7 +778,6 @@ function addSidebarToggleButton() {
             button.style.opacity = '0.6';
         }
 
-        // Resize canvas to account for sidebar visibility change
         resizeCanvas();
     });
 
@@ -440,10 +788,11 @@ function addSidebarToggleButton() {
 }
 
 function addMadeByText() {
+    // Create the text element directly without using DOM utilities
     const madeByText = document.createElement('div');
     madeByText.textContent = 'made by lost';
     madeByText.style.position = 'absolute';
-    madeByText.style.bottom = '55px'; // Position above the buttons
+    madeByText.style.bottom = '55px';
     madeByText.style.left = '50%';
     madeByText.style.transform = 'translateX(-50%)';
     madeByText.style.fontSize = '10px';
@@ -456,19 +805,18 @@ function addMadeByText() {
     document.body.appendChild(madeByText);
 }
 
-function updateVwapButtonAppearance(button) {
-    if (isVwapVisible) {
-        button.style.backgroundColor = '#2196F3'; // Blue color when VWAP is visible
-        button.style.opacity = '1';
-    } else {
-        button.style.backgroundColor = '#2196F3'; // Same color but more transparent when VWAP is hidden
-        button.style.opacity = '0.6';
-    }
-}
+// updateVwapButtonAppearance function removed - now handled by DOM utilities
 
 // --- Data Fetching ---
 function fetchHistoricalData() {
-    fetch('https://api.bybit.com/v5/market/kline?category=spot&symbol=BTCUSDT&interval=5&limit=750')
+    // Get current trading pair from coin manager
+    if (window.coinManager) {
+        currentPair = window.coinManager.getCurrentCoin().bybitSymbol;
+    }
+
+    console.log(`Fetching historical data for ${currentPair}`);
+
+    fetch(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${currentPair}&interval=5&limit=750`)
         .then(response => response.json())
         .then(data => {
             if (data.retCode === 0 && data.result && data.result.list) {
@@ -531,10 +879,12 @@ function fetchHistoricalData() {
         });
 }
 
+// Create throttled versions of drawChart for different update types
+let throttledDrawChart = throttle(drawChart, 100); // For orderbook updates
+let throttledPriceUpdate = throttle(drawChart, 50); // For price updates
+
 // --- WebSocket Subscriptions ---
 function setupWebSockets() {
-    // Create a throttled version of drawChart for price updates
-    const throttledPriceUpdate = throttle(drawChart, 50); // Update at most every 50ms for price (more frequent than orderbook)
 
     // Initialize the sidebar after WebSocket managers are available
     if (typeof ShortsLongsRatio === 'function') {
@@ -545,7 +895,21 @@ function setupWebSockets() {
         console.error('ShortsLongsRatio class not available');
     }
 
-    bybitWsManager.subscribe('kline.5.BTCUSDT', (data) => {
+    // Get current trading pair from coin manager
+    if (window.coinManager) {
+        currentPair = window.coinManager.getCurrentCoin().bybitSymbol;
+    }
+
+    // Listen for coin changes
+    document.addEventListener('coinChanged', (e) => {
+        handleCoinChange(e.detail.coin);
+    });
+
+    // Subscribe to the current pair's kline channel
+    const klineChannel = `kline.5.${currentPair}`;
+    console.log(`Subscribing to Bybit channel: ${klineChannel}`);
+
+    bybitWsManager.subscribe(klineChannel, (data) => {
         // Log first successful data reception
         if (!window.bybitConnected && data.topic && data.data) {
             console.log('✅ Bybit WebSocket connected and receiving data');
@@ -563,204 +927,29 @@ function setupWebSockets() {
                 close: parseFloat(bar.close)
             };
 
-            // Strict validation for bar timestamps to prevent random bars
-            const now = Date.now();
+            // Process the new bar using our helper function
+            processNewBar(newBar);
 
-            // 1. Validate that the bar timestamp is aligned with a 5-minute interval
-            const barDate = new Date(newBar.time);
-            const barMinutes = barDate.getMinutes();
-            const barSeconds = barDate.getSeconds();
-            const barMs = barDate.getMilliseconds();
-
-            // Bar must start exactly on a 5-minute boundary (e.g., 00:00, 00:05, 00:10...)
-            // and have 0 seconds and 0 milliseconds
-            if (barMinutes % 5 !== 0 || barSeconds !== 0 || barMs !== 0) {
-                console.log(`Rejecting bar with non-aligned timestamp: ${barDate.toLocaleString()}`);
-                return; // Skip this bar
-            }
-
-            // 2. Calculate the current 5-minute interval
-            const currentDate = new Date(now);
-            const currentMinutes = currentDate.getMinutes();
-            const currentFiveMinInterval = Math.floor(currentMinutes / 5) * 5;
-
-            // Create a date object for the start of the current 5-minute interval
-            const intervalStart = new Date(currentDate);
-            intervalStart.setMinutes(currentFiveMinInterval);
-            intervalStart.setSeconds(0);
-            intervalStart.setMilliseconds(0);
-
-            const currentIntervalStart = intervalStart.getTime();
-            const nextIntervalStart = currentIntervalStart + barIntervalMs;
-
-            // 3. Determine if this bar is current, historical, or future
-            const isCurrentIntervalBar = newBar.time === currentIntervalStart;
-            const isHistoricalBar = newBar.time < currentIntervalStart;
-            const isFutureBar = newBar.time > currentIntervalStart;
-
-            // 4. Find if this bar already exists
-            const existingBarIndex = bars.findIndex(b => b.time === newBar.time);
-            const isNewBar = existingBarIndex === -1;
-
-            // 5. Apply strict rules for bar acceptance
-            // - Allow updates to existing bars
-            // - Allow new bars only if they're historical or the current interval
-            // - Never allow future bars
-            if (isNewBar && isFutureBar) {
-                console.log(`Rejecting future bar: ${barDate.toLocaleString()}`);
-                return; // Skip future bars
-            }
-
-            // 6. For new bars in the current interval, ensure we're not creating them too early
-            // Only create the current interval bar if we're at least 10 seconds into the interval
-            if (isNewBar && isCurrentIntervalBar) {
-                const secondsIntoInterval = (now - currentIntervalStart) / 1000;
-                if (secondsIntoInterval < 10) {
-                    console.log(`Too early to create current interval bar, only ${secondsIntoInterval.toFixed(1)} seconds in`);
-                    return; // Too early to create this bar
-                }
-            }
-
-            // Log accepted bar
-            console.log(`${isNewBar ? 'Creating new' : 'Updating'} bar: ${barDate.toLocaleString()} (${isCurrentIntervalBar ? 'current' : isHistoricalBar ? 'historical' : 'future'})`);
-
-
-            // Now it's safe to add or update the bar
-            if (isNewBar) {
-                bars.push(newBar);
-                if (bars.length > 1000) bars.shift();
-                if (viewOffset + visibleBars >= bars.length - 1) {
-                    viewOffset = Math.max(0, bars.length - visibleBars);
-                    isPriceScaleManuallySet = false;
-                }
-            } else {
-                bars[existingBarIndex] = newBar;
-            }
-
-            // If this is a new bar, the previous bar has closed
-            if (isNewBar && bars.length > 1) {
-                // Update VWAP with the previous bar that just closed
-                const previousBar = bars[bars.length - 2]; // Get the bar before the new one
-                console.log(`Updating VWAP with previous bar at ${new Date(previousBar.time).toLocaleTimeString()} because it just closed`);
-                updateVwap(previousBar, true);
-
-                // Volume profile updates removed
-            }
-
-            // Only update VWAP for historical bars (never for the current interval bar)
-            // We no longer update VWAP during bar formation
-            if (!isCurrentIntervalBar) {
-                console.log(`Updating VWAP with historical bar at ${new Date(newBar.time).toLocaleTimeString()}`);
-                updateVwap(newBar, true);  // Historical bars are closed
-            } else {
-                console.log(`Skipping VWAP update for current interval bar at ${new Date(newBar.time).toLocaleTimeString()} - will update when bar closes`);
-            }
-            // IMPORTANT: Current interval bar is NEVER updated for VWAP until it closes
-            // This ensures VWAP only changes on bar close, not during bar formation
-
-            updateTitle();
             // Use throttled version of drawChart for better performance
             throttledPriceUpdate();
         }
     });
 
-    // Create a throttled version of drawChart for orderbook updates
-    const throttledOrderbookUpdate = throttle(drawChart, 100); // Update at most every 100ms
+    // Using global throttled functions defined above
 
-    bitstampWsManager.subscribe('order_book_btcusd', (data) => {
-        // Log first successful data reception
-        if (!window.bitstampConnected && data.event === 'data' && data.data) {
-            console.log('✅ Bitstamp WebSocket connected and receiving data');
-            window.bitstampConnected = true;
-            // Connection notification removed from chart display
-        }
-
-        if (data.event === 'data' && data.data && data.data.bids && data.data.asks) {
-            const rawBids = data.data.bids;
-            const rawAsks = data.data.asks;
-            const currentPrice = bars.length > 0 ? bars[bars.length - 1].close : 0;
-            if (currentPrice === 0) return;
-
-            btcPrice = currentPrice;
-
-            // Process orderbook data for display
-            orderbook.bids = rawBids.map(order => [parseFloat(order[0]), parseFloat(order[1]), parseFloat(order[0]) * parseFloat(order[1]) * btcPrice]);
-            orderbook.asks = rawAsks.map(order => [parseFloat(order[0]), parseFloat(order[1]), parseFloat(order[0]) * parseFloat(order[1]) * btcPrice]);
-
-            // Update the shorts vs longs ratio sidebar if it exists
-            if (window.shortsLongsRatio && typeof window.shortsLongsRatio.handleOrderbookUpdate === 'function') {
-                window.shortsLongsRatio.handleOrderbookUpdate(data);
-            }
-
-            // Process bids and asks in parallel using more efficient code
-            const orderProximityThresholdValue = orderProximityThreshold; // Cache this value
-            const minDollarValue = 300000; // Minimum dollar value threshold (increased to 400k USD)
-
-            // Pre-allocate arrays for better performance
-            const processedBids = [];
-            const processedAsks = [];
-
-            // Process bids efficiently
-            for (let i = 0; i < rawBids.length; i++) {
-                const order = rawBids[i];
-                const price = parseFloat(order[0]);
-                if (isNaN(price)) continue;
-
-                // Quick proximity check
-                if ((currentPrice - price) / currentPrice > orderProximityThresholdValue) continue;
-
-                const volume = parseFloat(order[1]);
-                const dollarValue = price * volume;
-
-                // Quick dollar value check
-                if (dollarValue < minDollarValue) continue;
-
-                processedBids.push([price, volume, dollarValue, 'bid']);
-            }
-
-            // Process asks efficiently
-            for (let i = 0; i < rawAsks.length; i++) {
-                const order = rawAsks[i];
-                const price = parseFloat(order[0]);
-                if (isNaN(price)) continue;
-
-                // Quick proximity check
-                if ((price - currentPrice) / currentPrice > orderProximityThresholdValue) continue;
-
-                const volume = parseFloat(order[1]);
-                const dollarValue = price * volume;
-
-                // Quick dollar value check
-                if (dollarValue < minDollarValue) continue;
-
-                processedAsks.push([price, volume, dollarValue, 'ask']);
-            }
-
-            // Combine and sort in one step for better performance
-            const combinedOrders = [...processedBids, ...processedAsks];
-            combinedOrders.sort((a, b) => b[2] - a[2]); // Sort by dollar value (descending)
-
-            // Get top 20 orders
-            const top20Orders = combinedOrders.slice(0, 20);
-
-            // Clear existing arrays for better memory management
-            orderbook.bids = [];
-            orderbook.asks = [];
-
-            // Separate back into bids and asks for rendering
-            for (let i = 0; i < top20Orders.length; i++) {
-                const order = top20Orders[i];
-                if (order[3] === 'bid') {
-                    orderbook.bids.push([order[0], order[1], order[2]]);
-                } else {
-                    orderbook.asks.push([order[0], order[1], order[2]]);
-                }
-            }
-
-            // Use throttled version of drawChart for better performance
-            throttledOrderbookUpdate();
-        }
-    });
+    // Subscribe to orderbook channel for the current coin
+    if (window.coinManager) {
+        const currentCoin = window.coinManager.getCurrentCoin();
+        const orderBookChannel = `order_book_${currentCoin.bitstampSymbol}`;
+        console.log(`Subscribing to Bitstamp channel: ${orderBookChannel}`);
+        bitstampWsManager.subscribe(orderBookChannel, handleBitstampOrderbook);
+    } else {
+        // Fallback for when coin manager is not available
+        const bitstampSymbol = 'btcusd';
+        const orderBookChannel = `order_book_${bitstampSymbol}`;
+        console.log(`Subscribing to Bitstamp channel: ${orderBookChannel}`);
+        bitstampWsManager.subscribe(orderBookChannel, handleBitstampOrderbook);
+    }
 }
 
 // --- Mouse Interaction ---
@@ -1113,8 +1302,20 @@ function findHoveredLimitOrder(mouseY) {
     const priceRange = Math.max(1e-6, maxPrice - minPrice);
     const mousePrice = minPrice + (1 - mouseY / chartHeight) * priceRange;
 
-    // Only consider orders with significant value (400k USD or more)
-    const minOrderValue = 400000;
+    // Get coin-specific minimum dollar value threshold
+    let minOrderValue = 400000; // Default for BTC (400k USD)
+
+    // Use different thresholds for different coins
+    if (window.coinManager) {
+        const currentCoin = window.coinManager.getCurrentCoin().symbol;
+        if (currentCoin === 'ETH') {
+            minOrderValue = 200000; // 200k USD for Ethereum
+        } else if (currentCoin === 'SOL') {
+            minOrderValue = 100000; // 100k USD for Solana
+        } else if (currentCoin === 'LTC') {
+            minOrderValue = 75000; // 75k USD for Litecoin
+        }
+    }
 
     // Filter to only significant orders
     const significantBids = orderbook.bids.filter(([, , value]) => value >= minOrderValue);
@@ -1356,8 +1557,8 @@ function drawCrosshair() {
             const labelY = mouseY;
 
             // Get color based on order type
-            const bidColor = getColor('bullishCandle', '#26a69a');
-            const askColor = getColor('bearishCandle', '#ef5350');
+            const bidColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+            const askColor = getColor('bearishCandleBody', getColor('bearishCandle', '#ef5350'));
 
             const orderColor = hoveredLimitOrder.type === 'BID' ? bidColor : askColor;
 
@@ -1436,8 +1637,8 @@ function drawCrosshair() {
             const orderType = isCloserToBid ? 'BID' : 'ASK';
 
             // Get customized colors for bid and ask
-            const bidColor = getColor('bullishCandle', '#26a69a');
-            const askColor = getColor('bearishCandle', '#ef5350');
+            const bidColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+            const askColor = getColor('bearishCandleBody', getColor('bearishCandle', '#ef5350'));
 
             // Convert hex to rgba with 0.9 opacity
             const bidRgbaColor = bidColor.startsWith('#') ?
@@ -1510,19 +1711,76 @@ function drawCrosshair() {
 function drawBidAskTags() {
     if (!ctx || !canvas) return;
 
-    // Always use the orderbook data we have
-    if (!orderbook.bids || !orderbook.asks || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
-        console.log('No orderbook data available for bid/ask tags');
+    // Check if we have any orderbook data
+    if (!orderbook.bids && !orderbook.asks) {
+        // No orderbook data available - this is normal when switching coins
         return;
     }
 
-    // Get the top bid and ask by dollar value (they're already sorted)
-    const topBid = orderbook.bids[0];
-    const topAsk = orderbook.asks[0];
-    const topBidPrice = topBid[0];
-    const topAskPrice = topAsk[0];
-    const bidDollarValue = topBid[2];
-    const askDollarValue = topAsk[2];
+    // Check if we have at least some data (either bids or asks)
+    const hasBids = orderbook.bids && orderbook.bids.length > 0;
+    const hasAsks = orderbook.asks && orderbook.asks.length > 0;
+
+    if (!hasBids && !hasAsks) {
+        // No bids or asks available
+        return;
+    }
+
+    // The orderbook data is already filtered and sorted in handleBitstampOrderbook
+    // We need to find the largest bid and ask by dollar value
+
+    // Create a copy of the orderbook data for sorting by dollar value
+    let bidsByValue = orderbook.bids && orderbook.bids.length > 0 ? [...orderbook.bids] : [];
+    let asksByValue = orderbook.asks && orderbook.asks.length > 0 ? [...orderbook.asks] : [];
+
+    // Sort by dollar value (descending)
+    bidsByValue.sort((a, b) => b[2] - a[2]);
+    asksByValue.sort((a, b) => b[2] - a[2]);
+
+    // Get the top bid and ask by dollar value if they exist
+    const topBid = bidsByValue.length > 0 ? bidsByValue[0] : null;
+    const topAsk = asksByValue.length > 0 ? asksByValue[0] : null;
+
+    // Log the top bid and ask
+    if (topBid) console.log(`Top bid: $${topBid[2].toFixed(2)} at price ${topBid[0]}`);
+    if (topAsk) console.log(`Top ask: $${topAsk[2].toFixed(2)} at price ${topAsk[0]}`);
+
+    // Check if we have at least one valid bid or ask
+    if (!topBid && !topAsk) {
+        // No valid bid/ask data - this is normal when switching coins
+        return;
+    }
+
+    // Get coin-specific minimum dollar value threshold
+    let minDollarValue = 400000; // Default for BTC (400k USD)
+
+    // Use different thresholds for different coins
+    if (window.coinManager) {
+        const currentCoin = window.coinManager.getCurrentCoin().symbol;
+        if (currentCoin === 'ETH') {
+            minDollarValue = 200000; // 200k USD for Ethereum
+        } else if (currentCoin === 'SOL') {
+            minDollarValue = 100000; // 100k USD for Solana
+        } else if (currentCoin === 'LTC') {
+            minDollarValue = 75000; // 75k USD for Litecoin
+        }
+    }
+
+    // Check if the orders are above the threshold
+    const hasBidAboveThreshold = topBid && topBid[2] >= minDollarValue;
+    const hasAskAboveThreshold = topAsk && topAsk[2] >= minDollarValue;
+
+    // Only proceed if at least one order is above the threshold
+    if (!hasBidAboveThreshold && !hasAskAboveThreshold) {
+        console.log('No bids or asks above the threshold');
+        return;
+    }
+
+    // Safely get values, handling cases where either might be null
+    const topBidPrice = topBid ? topBid[0] : 0;
+    const topAskPrice = topAsk ? topAsk[0] : 0;
+    const bidDollarValue = topBid ? topBid[2] : 0;
+    const askDollarValue = topAsk ? topAsk[2] : 0;
 
     // Get current price info
     const currentPrice = bars.length > 0 ? bars[bars.length - 1].close : null;
@@ -1552,8 +1810,8 @@ function drawBidAskTags() {
         const priceChange = prevBar ? currentPrice - prevBar.close : 0;
         const isBullish = priceChange >= 0;
         const priceColor = isBullish ?
-            getColor('bullishCandle', '#26a69a') :
-            getColor('bearishCandle', '#ef5350');
+            getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a')) :
+            getColor('bearishCandleBody', getColor('bearishCandle', '#ef5350'));
 
         tags.push({
             type: 'current',
@@ -1575,35 +1833,39 @@ function drawBidAskTags() {
         });
     }
 
-    // Add bid tag
-    const bidColor = getColor('bullishCandle', '#26a69a');
-    const bidRgbaColor = bidColor.startsWith('#') ?
-        `rgba(${parseInt(bidColor.slice(1, 3), 16)}, ${parseInt(bidColor.slice(3, 5), 16)}, ${parseInt(bidColor.slice(5, 7), 16)}, 0.8)` :
-        bidColor;
+    // Add bid tag if we have a valid bid above threshold
+    if (hasBidAboveThreshold) {
+        const bidColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+        const bidRgbaColor = bidColor.startsWith('#') ?
+            `rgba(${parseInt(bidColor.slice(1, 3), 16)}, ${parseInt(bidColor.slice(3, 5), 16)}, ${parseInt(bidColor.slice(5, 7), 16)}, 0.8)` :
+            bidColor;
 
-    tags.push({
-        type: 'bid',
-        y: bidLabelY,
-        height: tagHeight,
-        color: bidRgbaColor,
-        price: topBidPrice,
-        value: bidDollarValue
-    });
+        tags.push({
+            type: 'bid',
+            y: bidLabelY,
+            height: tagHeight,
+            color: bidRgbaColor,
+            price: topBidPrice,
+            value: bidDollarValue
+        });
+    }
 
-    // Add ask tag
-    const askColor = getColor('bearishCandle', '#ef5350');
-    const askRgbaColor = askColor.startsWith('#') ?
-        `rgba(${parseInt(askColor.slice(1, 3), 16)}, ${parseInt(askColor.slice(3, 5), 16)}, ${parseInt(askColor.slice(5, 7), 16)}, 0.8)` :
-        askColor;
+    // Add ask tag if we have a valid ask above threshold
+    if (hasAskAboveThreshold) {
+        const askColor = getColor('bearishCandleBody', getColor('bearishCandle', '#ef5350'));
+        const askRgbaColor = askColor.startsWith('#') ?
+            `rgba(${parseInt(askColor.slice(1, 3), 16)}, ${parseInt(askColor.slice(3, 5), 16)}, ${parseInt(askColor.slice(5, 7), 16)}, 0.8)` :
+            askColor;
 
-    tags.push({
-        type: 'ask',
-        y: askLabelY,
-        height: tagHeight,
-        color: askRgbaColor,
-        price: topAskPrice,
-        value: askDollarValue
-    });
+        tags.push({
+            type: 'ask',
+            y: askLabelY,
+            height: tagHeight,
+            color: askRgbaColor,
+            price: topAskPrice,
+            value: askDollarValue
+        });
+    }
 
     // Sort tags by Y position (top to bottom)
     tags.sort((a, b) => a.y - b.y);
@@ -1737,16 +1999,34 @@ function drawHeatmapLine(price, dollarValue, color, maxDollarValue) {
         const y = getYForPrice(price);
         if (!isFinite(y)) return;
 
+        // Get coin-specific minimum dollar value threshold
+        let minDollarValue = 400000; // Default for BTC (400k USD)
+
+        // Use different thresholds for different coins
+        if (window.coinManager) {
+            const currentCoin = window.coinManager.getCurrentCoin().symbol;
+            if (currentCoin === 'ETH') {
+                minDollarValue = 200000; // 200k USD for Ethereum
+            } else if (currentCoin === 'SOL') {
+                minDollarValue = 100000; // 100k USD for Solana
+            } else if (currentCoin === 'LTC') {
+                minDollarValue = 75000; // 75k USD for Litecoin
+            }
+        }
+
+        // Only draw lines for orders above the threshold
+        if (dollarValue < minDollarValue) return;
+
         // Calculate line width based on dollar value relative to max dollar value
-        // Use a more aggressive power curve (^3 instead of ^2) and increase the multiplier
+        // Use a more aggressive power curve (^3 instead of ^2) for better contrast
         const valueRatio = Math.min(1, dollarValue / maxDollarValue);
 
         // Make smaller lines thinner and bigger lines thicker
-        const minLineWidth = 0.5; // Thinner minimum line width
-        const maxLineWidth = 12;  // Thicker maximum line width
+        const minLineWidth = 1; // Minimum line width for visibility
+        const maxLineWidth = 10; // Maximum line width to avoid overwhelming the chart
 
-        // Use cubic power for more dramatic contrast
-        const lineWidth = minLineWidth + Math.pow(valueRatio, 3) * (maxLineWidth - minLineWidth);
+        // Use cubic power for more dramatic contrast between small and large orders
+        const lineWidth = minLineWidth + Math.pow(valueRatio, 2) * (maxLineWidth - minLineWidth);
 
         ctx.strokeStyle = color;
         ctx.lineWidth = lineWidth;
@@ -1864,8 +2144,7 @@ function drawVwapLine(points, startTime, endTime, startIndex, endIndex, lineColo
             }
         }
 
-        // For debugging
-        console.log('Applied opacity to VWAP bands:', bandColor);
+        // No need to log every time opacity is applied
     }
     const chartWidth = canvas.width - priceScaleWidth;
 
@@ -2263,6 +2542,12 @@ function drawChart() {
             return;
         }
 
+        // Draw coin indicator in top middle
+        drawCoinIndicator();
+
+        // Log that we're drawing the coin indicator
+        console.log('Drawing coin indicator for:', window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC');
+
         // Make drawChart globally accessible
         window.drawChart = drawChart;
 
@@ -2369,37 +2654,56 @@ function drawChart() {
 
         // Removed grid lines drawing code
 
-        if (orderbook.bids && orderbook.asks && orderbook.bids.length > 0 && orderbook.asks.length > 0) {
-            // Find max dollar value for scaling
-            const maxBidValue = orderbook.bids.length > 0 ? orderbook.bids[0][2] : 0;
-            const maxAskValue = orderbook.asks.length > 0 ? orderbook.asks[0][2] : 0;
-            const maxValue = Math.max(maxBidValue, maxAskValue);
+        // Check if we have any orderbook data to display
+        if (orderbook.bids || orderbook.asks) {
+            // Find the maximum dollar value for scaling line thickness
+            let maxValue = 0;
 
-            // Draw bid lines
-            orderbook.bids.forEach(([price, , dollarValue]) => {
-                // Skip orders under 400k USD
-                if (dollarValue >= 400000) {
-                    const bidColor = getColor('bullishCandle', '#26a69a');
+            // Check bids
+            if (orderbook.bids && orderbook.bids.length > 0) {
+                orderbook.bids.forEach(([, , dollarValue]) => {
+                    if (dollarValue > maxValue) maxValue = dollarValue;
+                });
+            }
+
+            // Check asks
+            if (orderbook.asks && orderbook.asks.length > 0) {
+                orderbook.asks.forEach(([, , dollarValue]) => {
+                    if (dollarValue > maxValue) maxValue = dollarValue;
+                });
+            }
+
+            // If no orders found, use a default value
+            if (maxValue === 0) maxValue = 1000000;
+
+            // Draw bid lines if we have any
+            if (orderbook.bids && orderbook.bids.length > 0) {
+                orderbook.bids.forEach(([price, , dollarValue]) => {
+                    const bidColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
                     // Convert hex to rgba with 0.6 opacity
                     const rgbaColor = bidColor.startsWith('#') ?
                         `rgba(${parseInt(bidColor.slice(1, 3), 16)}, ${parseInt(bidColor.slice(3, 5), 16)}, ${parseInt(bidColor.slice(5, 7), 16)}, 0.6)` :
                         bidColor;
                     drawHeatmapLine(price, dollarValue, rgbaColor, maxValue);
-                }
-            });
+                });
+            }
 
-            // Draw ask lines
-            orderbook.asks.forEach(([price, , dollarValue]) => {
-                // Skip orders under 400k USD
-                if (dollarValue >= 400000) {
-                    const askColor = getColor('bearishCandle', '#ef5350');
+            // Draw ask lines if we have any
+            if (orderbook.asks && orderbook.asks.length > 0) {
+                orderbook.asks.forEach(([price, , dollarValue]) => {
+                    const askColor = getColor('bearishCandleBody', getColor('bearishCandle', '#ef5350'));
                     // Convert hex to rgba with 0.6 opacity
                     const rgbaColor = askColor.startsWith('#') ?
                         `rgba(${parseInt(askColor.slice(1, 3), 16)}, ${parseInt(askColor.slice(3, 5), 16)}, ${parseInt(askColor.slice(5, 7), 16)}, 0.6)` :
                         askColor;
                     drawHeatmapLine(price, dollarValue, rgbaColor, maxValue);
-                }
-            });
+                });
+            }
+
+            // Log the number of bids and asks being displayed
+            const bidCount = orderbook.bids ? orderbook.bids.length : 0;
+            const askCount = orderbook.asks ? orderbook.asks.length : 0;
+            console.log(`Drawing orderbook: ${bidCount} bids, ${askCount} asks`);
         }
 
         const startX = -fractionalOffset * barWidth;
@@ -2422,21 +2726,42 @@ function drawChart() {
             if (![yHigh, yLow, yOpen, yClose].every(isFinite)) return;
 
             const isBullish = bar.close >= bar.open;
-            const candleColor = isBullish ?
-                getColor('bullishCandle', '#26a69a') :
-                getColor('bearishCandle', '#ef5350');
 
-            ctx.strokeStyle = candleColor;
+            // Get colors for different candle components
+            let bodyColor, borderColor, wickColor;
+
+            if (isBullish) {
+                // Bullish candle colors
+                bodyColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+                borderColor = getColor('bullishCandleBorder', getColor('bullishCandle', '#26a69a'));
+                wickColor = getColor('bullishCandleWick', getColor('bullishCandle', '#26a69a'));
+            } else {
+                // Bearish candle colors
+                bodyColor = getColor('bearishCandleBody', getColor('bearishCandle', '#ef5350'));
+                borderColor = getColor('bearishCandleBorder', getColor('bearishCandle', '#ef5350'));
+                wickColor = getColor('bearishCandleWick', getColor('bearishCandle', '#ef5350'));
+            }
+
+            // Draw the wick
+            ctx.strokeStyle = wickColor;
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(candleX + candleWidth / 2, yHigh);
             ctx.lineTo(candleX + candleWidth / 2, yLow);
             ctx.stroke();
 
-            ctx.fillStyle = candleColor;
+            // Calculate body dimensions
             const bodyHeight = Math.max(1, Math.abs(yClose - yOpen));
             const bodyY = Math.min(yOpen, yClose);
+
+            // Draw the body fill
+            ctx.fillStyle = bodyColor;
             ctx.fillRect(candleX, bodyY, effectiveCandleWidth, bodyHeight);
+
+            // Draw the body border
+            ctx.strokeStyle = borderColor;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(candleX, bodyY, effectiveCandleWidth, bodyHeight);
         });
 
         // Draw VWAP line
@@ -2497,8 +2822,13 @@ function drawChart() {
             drawCrosshair();
         }
 
-        // Make btcPrice available globally for liquidations.js
-        window.btcPrice = bars.length > 0 ? bars[bars.length - 1].close : 0;
+        // Make price available globally for other components
+        if (window.coinManager) {
+            const coinSymbol = window.coinManager.getCurrentCoin().symbol.toLowerCase();
+            window[`${coinSymbol}Price`] = bars.length > 0 ? bars[bars.length - 1].close : 0;
+        } else {
+            window.btcPrice = bars.length > 0 ? bars[bars.length - 1].close : 0;
+        }
     } catch (error) {
         console.error('Error in drawChart:', error);
     }
@@ -2507,6 +2837,72 @@ function drawChart() {
 function drawConnectionStatus() {
     // Function disabled - connection status widget removed from top left
     return;
+}
+
+// Draw coin indicator in the top middle of the chart
+function drawCoinIndicator() {
+    console.log('drawCoinIndicator called');
+    if (!ctx || !canvas) {
+        console.error('Canvas or context not available for coin indicator');
+        return;
+    }
+
+    // Get current coin info
+    const coin = window.coinManager ? window.coinManager.getCurrentCoin() : { symbol: 'BTC', name: 'Bitcoin' };
+    const currentPrice = window[`${coin.symbol.toLowerCase()}Price`] || 0;
+
+    // Format price according to coin's precision
+    const formattedPrice = currentPrice.toFixed(coin.pricePrecision || 2);
+
+    // Create indicator text
+    const indicatorText = `${coin.symbol}/USDT: ${formattedPrice}`;
+
+    // Set up styles
+    ctx.font = 'bold 22px Arial'; // Increased font size for better visibility
+    ctx.textAlign = 'center';
+
+    // Calculate position (center of screen for testing visibility)
+    const x = canvas.width / 2;
+    const y = canvas.height / 2; // Center of screen to ensure visibility
+
+    // Log canvas dimensions and position for debugging
+    console.log('Canvas dimensions:', canvas.width, 'x', canvas.height);
+    console.log('Coin indicator position:', x, y);
+
+    // Draw background
+    const textWidth = ctx.measureText(indicatorText).width;
+    const padding = 20; // Increased padding
+    const bgWidth = textWidth + padding * 2;
+    const bgHeight = 44; // Increased height
+
+    // Draw outer shadow for better visibility
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(x - bgWidth / 2 - 3, y - bgHeight / 2 - 3, bgWidth + 6, bgHeight + 6);
+
+    // Draw main background
+    ctx.fillStyle = 'rgba(31, 41, 55, 0.95)';
+    ctx.fillRect(x - bgWidth / 2, y - bgHeight / 2, bgWidth, bgHeight);
+
+    // Draw border with coin color
+    ctx.strokeStyle = coin.color || '#F7931A';
+    ctx.lineWidth = 4; // Thicker border
+    ctx.strokeRect(x - bgWidth / 2, y - bgHeight / 2, bgWidth, bgHeight);
+
+    // Draw text with shadow for better readability
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillText(indicatorText, x + 2, y + 8);
+
+    // Draw main text
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(indicatorText, x, y + 6);
+
+    // Add coin name below the symbol/price for better identification
+    ctx.font = 'italic 14px Arial';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.fillText(coin.name, x, y + bgHeight/2 + 16);
+
+    // Reset line width to avoid affecting other drawing operations
+    ctx.lineWidth = 1;
 }
 
 // --- Initialization ---
@@ -2542,6 +2938,7 @@ function initializeChart() {
     startCountdownTimer();
 
     addResetPriceScaleButton();
+    // Test liquidations button removed
     resizeCanvas();
     fetchHistoricalData();
     setupWebSockets();

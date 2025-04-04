@@ -25,8 +25,14 @@ class ShortsLongsRatio {
             asks: []  // Shorts
         };
 
+        // Current coin symbol
+        this.currentCoin = window.coinManager ? window.coinManager.getCurrentCoin() : { symbol: 'BTC', bitstampSymbol: 'btcusd' };
+
         // Initialize
         this.init();
+
+        // Add coin selector
+        this.addCoinSelector();
 
         // Add version display
         this.addVersionDisplay();
@@ -38,67 +44,109 @@ class ShortsLongsRatio {
         document.addEventListener('colorsUpdated', () => {
             this.applyColors();
         });
+
+        // Listen for coin changes
+        document.addEventListener('coinChanged', (e) => {
+            this.handleCoinChange(e.detail.coin);
+        });
     }
 
     init() {
-        // Subscribe to orderbook updates
-        if (window.bitstampWsManager) {
-            window.bitstampWsManager.subscribe('order_book_btcusd', this.handleOrderbookUpdate.bind(this));
-        } else {
-            console.error('Bitstamp WebSocket manager not available');
-            // Retry after a delay
-            setTimeout(() => this.init(), 1000);
-        }
+        // Wait for WebSocket manager to be available
+        const checkAndSubscribe = () => {
+            if (window.bitstampWsManager) {
+                const channel = `order_book_${this.currentCoin.bitstampSymbol}`;
+                console.log(`Subscribing to Bitstamp channel from sidebar: ${channel}`);
+                window.bitstampWsManager.subscribe(channel, this.handleOrderbookUpdate.bind(this));
+            } else {
+                console.log('Waiting for Bitstamp WebSocket manager to be available...');
+                // Retry after a delay
+                setTimeout(checkAndSubscribe, 1000);
+            }
+        };
+
+        // Start checking for WebSocket manager
+        checkAndSubscribe();
     }
 
     handleOrderbookUpdate(data) {
         if (data.event === 'data' && data.data && data.data.bids && data.data.asks) {
-            // Store raw orderbook data
-            this.data.bids = data.data.bids.map(order => [parseFloat(order[0]), parseFloat(order[1])]);
-            this.data.asks = data.data.asks.map(order => [parseFloat(order[0]), parseFloat(order[1])]);
+            try {
+                // Get current price for USD calculations
+                const priceVarName = `${this.currentCoin.symbol.toLowerCase()}Price`;
+                const currentPrice = window[priceVarName] || 0;
 
-            // Update the sidebar
-            this.updateSidebar();
+                // Clear existing data
+                this.data.bids = [];
+                this.data.asks = [];
+
+                // Process raw orderbook data
+                const rawBids = data.data.bids;
+                const rawAsks = data.data.asks;
+
+                // Process bids
+                for (let i = 0; i < rawBids.length; i++) {
+                    const order = rawBids[i];
+                    const price = parseFloat(order[0]);
+                    const size = parseFloat(order[1]);
+                    // Calculate USD value correctly - price is already in USD
+                    this.data.bids.push([price, size, price * size]); // Include USD value
+                }
+
+                // Process asks
+                for (let i = 0; i < rawAsks.length; i++) {
+                    const order = rawAsks[i];
+                    const price = parseFloat(order[0]);
+                    const size = parseFloat(order[1]);
+                    // Calculate USD value correctly - price is already in USD
+                    this.data.asks.push([price, size, price * size]); // Include USD value
+                }
+
+                // Update the sidebar
+                this.updateSidebar();
+            } catch (error) {
+                console.error('Error processing orderbook data in sidebar:', error);
+            }
         }
     }
 
     updateSidebar() {
-        // Calculate total BTC volume for bids (longs) and asks (shorts)
-        const totalBidBTC = this.data.bids.reduce((sum, [, volume]) => sum + volume, 0);
-        const totalAskBTC = this.data.asks.reduce((sum, [, volume]) => sum + volume, 0);
-        const totalBTC = totalBidBTC + totalAskBTC;
+        // Get current coin symbol
+        const coinSymbol = this.currentCoin.symbol;
 
-        // Get current BTC price for USD calculations
-        const currentPrice = window.btcPrice || 0;
+        // Calculate total volume for bids (longs) and asks (shorts)
+        const totalBidVolume = this.data.bids.reduce((sum, [, volume]) => sum + volume, 0);
+        const totalAskVolume = this.data.asks.reduce((sum, [, volume]) => sum + volume, 0);
+        const totalVolume = totalBidVolume + totalAskVolume;
 
-        // Calculate USD values
-        const totalBidUSD = totalBidBTC * currentPrice;
-        const totalAskUSD = totalAskBTC * currentPrice;
+        // Calculate total USD values (already calculated in handleOrderbookUpdate)
+        const totalBidUSD = this.data.bids.reduce((sum, [, , usdValue]) => sum + (usdValue || 0), 0);
+        const totalAskUSD = this.data.asks.reduce((sum, [, , usdValue]) => sum + (usdValue || 0), 0);
         const totalUSD = totalBidUSD + totalAskUSD;
 
         // Calculate ratio as a percentage (longs as % of total)
-        const longsPercentage = (totalBidBTC / totalBTC) * 100;
-        const shortsPercentage = (totalAskBTC / totalBTC) * 100;
+        const longsPercentage = totalVolume > 0 ? (totalBidVolume / totalVolume) * 100 : 50;
+        const shortsPercentage = totalVolume > 0 ? (totalAskVolume / totalVolume) * 100 : 50;
 
         // Calculate which side has more volume for color determination
-        const longsGreaterThanShorts = totalBidBTC > totalAskBTC;
+        const longsGreaterThanShorts = totalBidVolume > totalAskVolume;
 
         // Calculate imbalance (difference between longs and shorts)
         const imbalanceValue = longsPercentage - shortsPercentage;
 
-        // Calculate imbalance in USD and BTC
+        // Calculate imbalance in USD and coin volume
         const imbalanceUSD = totalBidUSD - totalAskUSD;
-        const imbalanceBTC = totalBidBTC - totalAskBTC;
+        const imbalanceVolume = totalBidVolume - totalAskVolume;
 
         // Update DOM elements
         this.longsBar.style.width = `${longsPercentage}%`;
         this.shortsBar.style.width = `${shortsPercentage}%`;
-        this.totalVolume.textContent = totalBTC.toFixed(2);
+        this.totalVolume.textContent = totalVolume.toFixed(2);
         this.totalUsd.textContent = `$${this.formatNumberWithCommas(totalUSD.toFixed(0))}`;
-        this.longsVolume.textContent = totalBidBTC.toFixed(2);
+        this.longsVolume.textContent = totalBidVolume.toFixed(2);
         this.longsUsd.textContent = `$${this.formatNumberWithCommas(totalBidUSD.toFixed(0))}`;
         this.longsPercentage.textContent = `${longsPercentage.toFixed(2)}%`;
-        this.shortsVolume.textContent = totalAskBTC.toFixed(2);
+        this.shortsVolume.textContent = totalAskVolume.toFixed(2);
         this.shortsUsd.textContent = `$${this.formatNumberWithCommas(totalAskUSD.toFixed(0))}`;
         this.shortsPercentage.textContent = `${shortsPercentage.toFixed(2)}%`;
 
@@ -110,9 +158,30 @@ class ShortsLongsRatio {
         const usdSign = imbalanceUSD > 0 ? '+' : '';
         this.imbalanceUsd.textContent = `${usdSign}$${this.formatNumberWithCommas(Math.abs(imbalanceUSD).toFixed(0))}`;
 
-        // Update imbalance BTC with sign and formatting
-        const btcSign = imbalanceBTC > 0 ? '+' : '';
-        this.imbalanceBtc.textContent = `${btcSign}${Math.abs(imbalanceBTC).toFixed(2)}`;
+        // Update imbalance volume with sign and formatting
+        const volumeSign = imbalanceVolume > 0 ? '+' : '';
+        this.imbalanceBtc.textContent = `${volumeSign}${Math.abs(imbalanceVolume).toFixed(2)}`;
+
+        // Update all coin-specific labels
+        const imbalanceCoinLabel = document.getElementById('imbalance-coin-label');
+        if (imbalanceCoinLabel) {
+            imbalanceCoinLabel.textContent = `Imbalance ${this.currentCoin.symbol}:`;
+        }
+
+        const totalCoinLabel = document.getElementById('total-coin-label');
+        if (totalCoinLabel) {
+            totalCoinLabel.textContent = `Total ${this.currentCoin.symbol}:`;
+        }
+
+        const longsCoinLabel = document.getElementById('longs-coin-label');
+        if (longsCoinLabel) {
+            longsCoinLabel.textContent = `Longs ${this.currentCoin.symbol}:`;
+        }
+
+        const shortsCoinLabel = document.getElementById('shorts-coin-label');
+        if (shortsCoinLabel) {
+            shortsCoinLabel.textContent = `Shorts ${this.currentCoin.symbol}:`;
+        }
 
         // Get colors from color customizer if available
         const longsColor = window.colorCustomizer ? window.colorCustomizer.colors.longsColor : '#26a69a';
@@ -171,6 +240,145 @@ class ShortsLongsRatio {
         }
 
         // Refresh the display with new colors
+        this.updateSidebar();
+    }
+
+    addCoinSelector() {
+        // Check if coin manager is available
+        if (!window.coinManager) {
+            console.warn('Coin manager not available');
+            return;
+        }
+
+        // Remove any existing coin selectors
+        const existingSelectors = document.querySelectorAll('.coin-selector-container');
+        existingSelectors.forEach(selector => {
+            selector.parentNode.removeChild(selector);
+        });
+
+        // Create coin selector container
+        const selectorContainer = document.createElement('div');
+        selectorContainer.className = 'coin-selector-container';
+        selectorContainer.style.position = 'absolute';
+        selectorContainer.style.bottom = '30px'; // Position above version display
+        selectorContainer.style.left = '0';
+        selectorContainer.style.width = '100%';
+        selectorContainer.style.height = '30px';
+        selectorContainer.style.display = 'flex';
+        selectorContainer.style.justifyContent = 'center';
+        selectorContainer.style.alignItems = 'center';
+        selectorContainer.style.backgroundColor = '#131722';
+        selectorContainer.style.borderTop = '1px solid rgba(255, 255, 255, 0.1)';
+        selectorContainer.style.zIndex = '9';
+
+        // Create button group for coin selection
+        const buttonGroup = document.createElement('div');
+        buttonGroup.style.display = 'flex';
+        buttonGroup.style.justifyContent = 'space-between';
+        buttonGroup.style.width = '90%';
+
+        // Get available coins
+        const coins = Object.keys(window.coinManager.coins);
+
+        // Create a button for each coin
+        coins.forEach(coinSymbol => {
+            const coin = window.coinManager.coins[coinSymbol];
+            const button = document.createElement('button');
+            button.textContent = coinSymbol;
+            button.style.flex = '1';
+            button.style.margin = '0 2px';
+            button.style.padding = '2px 0';
+            button.style.backgroundColor = this.currentCoin.symbol === coinSymbol ? coin.color : 'transparent';
+            button.style.color = this.currentCoin.symbol === coinSymbol ? '#000' : '#fff';
+            button.style.border = `1px solid ${coin.color}`;
+            button.style.borderRadius = '3px';
+            button.style.fontSize = '10px';
+            button.style.fontWeight = 'bold';
+            button.style.cursor = 'pointer';
+            button.style.transition = 'all 0.2s ease';
+
+            // Add hover effect
+            button.addEventListener('mouseenter', () => {
+                if (this.currentCoin.symbol !== coinSymbol) {
+                    button.style.backgroundColor = `${coin.color}33`; // 20% opacity
+                }
+            });
+
+            button.addEventListener('mouseleave', () => {
+                if (this.currentCoin.symbol !== coinSymbol) {
+                    button.style.backgroundColor = 'transparent';
+                }
+            });
+
+            // Add click handler
+            button.addEventListener('click', () => {
+                if (window.coinManager && this.currentCoin.symbol !== coinSymbol) {
+                    window.coinManager.switchCoin(coinSymbol);
+                }
+            });
+
+            buttonGroup.appendChild(button);
+        });
+
+        selectorContainer.appendChild(buttonGroup);
+        this.sidebar.appendChild(selectorContainer);
+
+        // Store reference
+        this.coinSelectorContainer = selectorContainer;
+    }
+
+    handleCoinChange(coin) {
+        console.log(`Sidebar handling coin change to ${coin.symbol}`);
+
+        // Update current coin reference
+        this.currentCoin = coin;
+
+        // Update coin selector buttons
+        if (this.coinSelectorContainer) {
+            const buttons = this.coinSelectorContainer.querySelectorAll('button');
+            buttons.forEach(button => {
+                const coinSymbol = button.textContent;
+                const coinColor = window.coinManager.coins[coinSymbol].color;
+
+                if (coinSymbol === coin.symbol) {
+                    button.style.backgroundColor = coinColor;
+                    button.style.color = '#000';
+                } else {
+                    button.style.backgroundColor = 'transparent';
+                    button.style.color = '#fff';
+                }
+            });
+        }
+
+        // Update the sidebar title to match the current coin
+        if (this.title) {
+            this.title.textContent = `${coin.symbol} Orderbook`;
+        }
+
+        // Unsubscribe from old orderbook channel
+        if (window.bitstampWsManager) {
+            // Unsubscribe from all orderbook channels
+            Object.values(window.coinManager.coins).forEach(c => {
+                const channel = `order_book_${c.bitstampSymbol}`;
+                window.bitstampWsManager.unsubscribe(channel);
+            });
+
+            // Subscribe to new orderbook channel
+            const newChannel = `order_book_${coin.bitstampSymbol}`;
+            console.log(`Subscribing to new Bitstamp channel from sidebar: ${newChannel}`);
+            window.bitstampWsManager.subscribe(newChannel, this.handleOrderbookUpdate.bind(this));
+
+            // Reset data to clear old orderbook
+            this.data = {
+                bids: [],
+                asks: []
+            };
+
+            // Force an immediate update of the sidebar
+            this.updateSidebar();
+        }
+
+        // Update sidebar labels
         this.updateSidebar();
     }
 

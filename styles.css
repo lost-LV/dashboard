@@ -28,6 +28,23 @@ body, html {
     bottom: 0;
 }
 
+#coin-indicator {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(31, 41, 55, 0.95);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 3px;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: center;
+    z-index: 1000;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+    border: 2px solid #F7931A; /* Default Bitcoin color */
+}
+
 #chart {
     flex: 1;
     height: 100%;
