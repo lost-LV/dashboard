@@ -17,9 +17,12 @@ class ColorCustomizer {
             vwapTags: '#ff9800',
             vwapBands: 'rgba(255, 152, 0, 0.2)',
             crosshair: 'rgba(150, 150, 150, 0.5)',
-            sidebarBackground: 'rgba(31, 41, 55, 0.95)',
+            sidebarBackground: 'rgb(19, 23, 34)',
             longsColor: '#26a69a',
             shortsColor: '#ef5350',
+            // Bid/Ask strength colors
+            bidStrengthColor: 'rgba(38, 166, 154, 0.7)', // Green for bid strength
+            askStrengthColor: 'rgba(239, 83, 80, 0.7)', // Red for ask strength
             // Liquidation colors
             sellLiquidationColor: 'rgba(220, 50, 50, 1.0)', // Red for sell liquidations
             buyLiquidationColor: 'rgba(0, 200, 200, 1.0)' // Aqua for buy liquidations
@@ -146,6 +149,22 @@ class ColorCustomizer {
         }
     }
 
+    updateColorInputs() {
+        // Update all color inputs to reflect the current colors
+        const colorInputs = document.querySelectorAll('.color-input');
+        colorInputs.forEach(input => {
+            const colorId = input.getAttribute('data-color-id');
+            if (colorId && this.colors[colorId]) {
+                input.value = this.colors[colorId];
+                // Also update the color preview
+                const preview = input.parentElement.querySelector('.color-preview');
+                if (preview) {
+                    preview.style.backgroundColor = this.colors[colorId];
+                }
+            }
+        });
+    }
+
     showNotification(message) {
         // Create notification element
         const notification = document.createElement('div');
@@ -190,6 +209,9 @@ class ColorCustomizer {
         overlay.style.justifyContent = 'center';
         overlay.style.alignItems = 'center';
 
+        // Store overlay reference for access from other methods
+        this.overlay = overlay;
+
         // Create menu container
         const menu = document.createElement('div');
         menu.className = 'color-menu';
@@ -198,7 +220,7 @@ class ColorCustomizer {
         menu.style.padding = '20px';
         menu.style.borderRadius = '8px';
         menu.style.zIndex = '10000';
-        menu.style.width = '600px'; // Wider rectangle
+        menu.style.width = '800px'; // Increased width from 600px to 800px to ensure all content fits
         menu.style.maxHeight = '80vh'; // Taller to allow scrolling if needed
         menu.style.overflowY = 'auto'; // Enable vertical scrolling
         menu.style.overflowX = 'hidden'; // Prevent horizontal scrolling
@@ -242,8 +264,7 @@ class ColorCustomizer {
         });
 
         closeButton.addEventListener('click', () => {
-            overlay.style.display = 'none';
-            toggleButton.style.backgroundColor = '#2196F3';
+            this.hideMenu();
         });
 
         menu.appendChild(closeButton);
@@ -260,41 +281,47 @@ class ColorCustomizer {
 
         menu.appendChild(title);
 
-        // Create toggle button
+        // Create toggle button with sidebar-button class
         const toggleButton = document.createElement('button');
-        toggleButton.textContent = 'Customize';
-        toggleButton.style.position = 'absolute';
-        toggleButton.style.bottom = '35px'; // Move up to avoid timescale
-        toggleButton.style.left = '50%';
-        toggleButton.style.transform = 'translateX(-50%)';
-        toggleButton.style.width = '80px'; // Wider for the new text
-        toggleButton.style.padding = '5px'; // Fixed padding
-        toggleButton.style.fontSize = '10px'; // Fixed text size
-        toggleButton.style.backgroundColor = '#2196F3';
-        toggleButton.style.color = '#ffffff';
-        toggleButton.style.border = 'none';
-        toggleButton.style.borderRadius = '5px';
-        toggleButton.style.cursor = 'pointer';
-        toggleButton.style.zIndex = '1001';
-        toggleButton.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)';
-        toggleButton.style.transition = 'background-color 0.2s, transform 0.1s';
+        toggleButton.className = 'sidebar-button';
+        toggleButton.id = 'color-customizer-button';
 
-        // Add hover and active effects
-        toggleButton.addEventListener('mouseenter', () => {
-            toggleButton.style.backgroundColor = '#1976D2'; // Darker blue on hover
+        // Add feature icon span (same as other buttons)
+        const featureIcon = document.createElement('span');
+        featureIcon.className = 'feature-icon';
+        toggleButton.appendChild(featureIcon);
+
+        // Add text for the button - will be positioned after the icon by CSS
+        const textNode = document.createTextNode('Settings');
+        toggleButton.appendChild(textNode);
+
+        // Also create a fallback button that will be visible if sidebar is hidden
+        const fallbackButton = document.createElement('button');
+        fallbackButton.textContent = 'Settings';
+        fallbackButton.style.position = 'fixed';
+        fallbackButton.style.bottom = '10px';
+        fallbackButton.style.left = '10px';
+        fallbackButton.style.padding = '5px 10px';
+        fallbackButton.style.backgroundColor = '#FF9800';
+        fallbackButton.style.color = '#ffffff';
+        fallbackButton.style.border = 'none';
+        fallbackButton.style.borderRadius = '5px';
+        fallbackButton.style.fontSize = '12px';
+        fallbackButton.style.cursor = 'pointer';
+        fallbackButton.style.zIndex = '9999';
+        fallbackButton.style.display = 'none'; // Hidden by default
+
+        // Add click event to fallback button
+        fallbackButton.addEventListener('click', () => {
+            if (this.showMenu) this.showMenu();
         });
 
-        toggleButton.addEventListener('mouseleave', () => {
-            toggleButton.style.backgroundColor = '#2196F3'; // Back to original blue
-        });
+        // Store the button references for access from other scripts
+        this.toggleButton = toggleButton;
+        this.fallbackButton = fallbackButton;
 
-        toggleButton.addEventListener('mousedown', () => {
-            toggleButton.style.transform = 'translateX(-50%) scale(0.95)';
-        });
-
-        toggleButton.addEventListener('mouseup', () => {
-            toggleButton.style.transform = 'translateX(-50%) scale(1)';
-        });
+        // Add the fallback button to the document body
+        document.body.appendChild(fallbackButton);
 
         // Add color pickers
         const colorOptions = [
@@ -306,6 +333,8 @@ class ColorCustomizer {
             { id: 'sidebarBackground', label: 'Sidebar Background' },
             { id: 'longsColor', label: 'Longs Color (sidebar)' },
             { id: 'shortsColor', label: 'Shorts Color (sidebar)' },
+            { id: 'bidStrengthColor', label: 'Bid Strength Color' },
+            { id: 'askStrengthColor', label: 'Ask Strength Color' },
             { id: 'sellLiquidationColor', label: 'Sell Liquidation Color' },
             { id: 'buyLiquidationColor', label: 'Buy Liquidation Color' }
         ];
@@ -358,7 +387,7 @@ class ColorCustomizer {
             const panel = document.createElement('div');
             panel.style.display = isActive ? 'flex' : 'none';
             panel.style.flexDirection = 'row';
-            panel.style.gap = '20px';
+            panel.style.gap = '30px'; // Increased from 20px to 30px for better spacing
             panel.style.minHeight = '100%';
             panel.style.width = '100%';
             panel.style.overflow = 'visible';
@@ -368,14 +397,16 @@ class ColorCustomizer {
             leftColumn.style.flex = '1';
             leftColumn.style.display = 'flex';
             leftColumn.style.flexDirection = 'column';
-            leftColumn.style.minWidth = '45%';
+            leftColumn.style.minWidth = '48%'; // Increased from 45% to 48%
+            leftColumn.style.maxWidth = '48%'; // Added max-width to prevent overflow
             leftColumn.style.overflow = 'visible';
 
             const rightColumn = document.createElement('div');
             rightColumn.style.flex = '1';
             rightColumn.style.display = 'flex';
             rightColumn.style.flexDirection = 'column';
-            rightColumn.style.minWidth = '45%';
+            rightColumn.style.minWidth = '48%'; // Increased from 45% to 48%
+            rightColumn.style.maxWidth = '48%'; // Added max-width to prevent overflow
             rightColumn.style.overflow = 'visible';
 
             panel.appendChild(leftColumn);
@@ -423,9 +454,11 @@ class ColorCustomizer {
         };
 
         // Create tabs with icons
-        const chartTab = createTab('Chart Colors', '🎨', true);
+        const chartTab = createTab('Chart Colors', '🎨', true); // Make Chart Colors the default active tab
         const liquidationsTab = createTab('Liquidations', '💧', false);
         const vwapTab = createTab('VWAP', '📊', false);
+        const strengthTab = createTab('Bid/Ask', '📈', false);
+        const presetsTab = createTab('Presets', '🎭', false); // Add Presets tab between Bid/Ask and Other
         const otherTab = createTab('Other', '⚙️', false);
 
         // Filter color options for each tab
@@ -437,6 +470,9 @@ class ColorCustomizer {
 
         const vwapColorOptions = colorOptions.filter(option =>
             ['vwapLine', 'vwapTags', 'vwapBands'].includes(option.id));
+
+        const strengthColorOptions = colorOptions.filter(option =>
+            ['bidStrengthColor', 'askStrengthColor'].includes(option.id));
 
         const otherColorOptions = colorOptions.filter(option =>
             ['sidebarBackground', 'longsColor', 'shortsColor'].includes(option.id));
@@ -520,8 +556,280 @@ class ColorCustomizer {
             { id: 'bearishCandleWick', label: 'Bearish Candle Wick' }
         ];
 
+        // Create presets section in the Presets tab
+        const createPresetsSection = () => {
+            const section = document.createElement('div');
+            section.className = 'color-section';
+            section.style.width = '100%';
+            section.style.marginBottom = '20px';
+
+            const header = document.createElement('h3');
+            header.textContent = 'Available Presets';
+            header.style.marginBottom = '15px';
+            header.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
+            header.style.paddingBottom = '5px';
+            header.style.fontSize = '16px';
+            header.style.fontWeight = 'bold';
+            header.style.color = '#ffffff';
+            section.appendChild(header);
+
+            const presetContainer = document.createElement('div');
+            presetContainer.style.display = 'flex';
+            presetContainer.style.flexDirection = 'column';
+            presetContainer.style.gap = '10px';
+
+            // Green & Red preset (default)
+            const greenRedPreset = document.createElement('button');
+            greenRedPreset.className = 'preset-button';
+            greenRedPreset.innerHTML = '<span style="color: #26a69a;">Green</span> & <span style="color: #ef5350;">Red</span> (Default)';
+            greenRedPreset.style.padding = '15px'; // Increased from 10px to 15px
+            greenRedPreset.style.background = 'linear-gradient(135deg, #131722, #1c2230)';
+            greenRedPreset.style.border = '1px solid #444';
+            greenRedPreset.style.borderRadius = '6px'; // Increased from 4px to 6px
+            greenRedPreset.style.color = 'white';
+            greenRedPreset.style.cursor = 'pointer';
+            greenRedPreset.style.fontSize = '16px'; // Increased from 14px to 16px
+            greenRedPreset.style.textAlign = 'center';
+            greenRedPreset.style.transition = 'all 0.2s ease';
+            greenRedPreset.style.marginBottom = '15px'; // Added margin for spacing
+
+            // Add hover effect
+            greenRedPreset.addEventListener('mouseenter', () => {
+                greenRedPreset.style.backgroundColor = '#444';
+                greenRedPreset.style.transform = 'scale(1.02)';
+            });
+
+            greenRedPreset.addEventListener('mouseleave', () => {
+                greenRedPreset.style.backgroundColor = '#333';
+                greenRedPreset.style.transform = 'scale(1)';
+            });
+
+            greenRedPreset.addEventListener('click', () => {
+                // Apply Green & Red preset
+                this.colors = {
+                    ...this.colors, // Keep background and other colors
+                    // Candle colors
+                    bullishCandle: '#26a69a',
+                    bearishCandle: '#ef5350',
+                    bullishCandleBody: '#26a69a',
+                    bullishCandleBorder: '#26a69a',
+                    bullishCandleWick: '#26a69a',
+                    bearishCandleBody: '#ef5350',
+                    bearishCandleBorder: '#ef5350',
+                    bearishCandleWick: '#ef5350',
+                    // Sidebar colors
+                    longsColor: '#26a69a',
+                    shortsColor: '#ef5350',
+                    // Bid/Ask strength colors
+                    bidStrengthColor: 'rgba(38, 166, 154, 0.7)',
+                    askStrengthColor: 'rgba(239, 83, 80, 0.7)',
+                    // Liquidation colors
+                    sellLiquidationColor: 'rgba(220, 50, 50, 1.0)',
+                    buyLiquidationColor: 'rgba(0, 200, 200, 1.0)',
+                    // VWAP colors
+                    vwapLine: '#26a69a',
+                    vwapTags: '#26a69a',
+                    vwapBands: 'rgba(38, 166, 154, 0.3)'
+                };
+                this.saveColors();
+                this.updateColorInputs();
+                drawChart(); // Redraw chart with new colors
+            });
+            presetContainer.appendChild(greenRedPreset);
+
+            // Black & White preset
+            const blackWhitePreset = document.createElement('button');
+            blackWhitePreset.className = 'preset-button';
+            blackWhitePreset.innerHTML = '<span style="color: white;">Black</span> & <span style="color: #dddddd;">White</span>';
+            blackWhitePreset.style.padding = '15px'; // Increased from 10px to 15px
+            blackWhitePreset.style.background = 'linear-gradient(135deg, #0a0a0a, #1a1a1a)';
+            blackWhitePreset.style.border = '1px solid #444';
+            blackWhitePreset.style.borderRadius = '6px'; // Increased from 4px to 6px
+            blackWhitePreset.style.color = 'white';
+            blackWhitePreset.style.cursor = 'pointer';
+            blackWhitePreset.style.fontSize = '16px'; // Increased from 14px to 16px
+            blackWhitePreset.style.textAlign = 'center';
+            blackWhitePreset.style.transition = 'all 0.2s ease';
+
+            // Add hover effect
+            blackWhitePreset.addEventListener('mouseenter', () => {
+                blackWhitePreset.style.backgroundColor = '#444';
+                blackWhitePreset.style.transform = 'scale(1.02)';
+            });
+
+            blackWhitePreset.addEventListener('mouseleave', () => {
+                blackWhitePreset.style.backgroundColor = '#333';
+                blackWhitePreset.style.transform = 'scale(1)';
+            });
+
+            blackWhitePreset.addEventListener('click', () => {
+                // Apply Black & White preset
+                this.colors = {
+                    ...this.colors, // Keep background and other colors
+                    // Candle colors
+                    bullishCandle: '#ffffff',
+                    bearishCandle: '#888888',
+                    bullishCandleBody: '#ffffff',
+                    bullishCandleBorder: '#ffffff',
+                    bullishCandleWick: '#ffffff',
+                    bearishCandleBody: '#888888',
+                    bearishCandleBorder: '#888888',
+                    bearishCandleWick: '#888888',
+                    // Sidebar colors
+                    longsColor: '#ffffff',
+                    shortsColor: '#888888',
+                    // Bid/Ask strength colors
+                    bidStrengthColor: 'rgba(255, 255, 255, 0.7)',
+                    askStrengthColor: 'rgba(136, 136, 136, 0.7)',
+                    // Liquidation colors
+                    sellLiquidationColor: 'rgba(136, 136, 136, 1.0)',
+                    buyLiquidationColor: 'rgba(255, 255, 255, 1.0)',
+                    // VWAP colors
+                    vwapLine: '#ffffff',
+                    vwapTags: '#ffffff',
+                    vwapBands: 'rgba(255, 255, 255, 0.3)'
+                };
+                this.saveColors();
+                this.updateColorInputs();
+                drawChart(); // Redraw chart with new colors
+            });
+            presetContainer.appendChild(blackWhitePreset);
+
+            // Purple & White preset
+            const purpleWhitePreset = document.createElement('button');
+            purpleWhitePreset.className = 'preset-button';
+            purpleWhitePreset.innerHTML = '<span style="color: #9c27b0;">Purple</span> & <span style="color: #ffffff;">White</span>';
+            purpleWhitePreset.style.padding = '15px';
+            purpleWhitePreset.style.background = 'linear-gradient(135deg, #1a0e1f, #2c1a33)';
+            purpleWhitePreset.style.border = '1px solid #444';
+            purpleWhitePreset.style.borderRadius = '6px';
+            purpleWhitePreset.style.color = 'white';
+            purpleWhitePreset.style.cursor = 'pointer';
+            purpleWhitePreset.style.fontSize = '16px';
+            purpleWhitePreset.style.textAlign = 'center';
+            purpleWhitePreset.style.transition = 'all 0.2s ease';
+            purpleWhitePreset.style.marginBottom = '15px';
+
+            // Add hover effect
+            purpleWhitePreset.addEventListener('mouseenter', () => {
+                purpleWhitePreset.style.backgroundColor = '#444';
+                purpleWhitePreset.style.transform = 'scale(1.02)';
+            });
+
+            purpleWhitePreset.addEventListener('mouseleave', () => {
+                purpleWhitePreset.style.backgroundColor = '#333';
+                purpleWhitePreset.style.transform = 'scale(1)';
+            });
+
+            purpleWhitePreset.addEventListener('click', () => {
+                // Apply Purple & White preset
+                this.colors = {
+                    ...this.colors, // Keep background and other colors
+                    // Candle colors
+                    bullishCandle: '#9c27b0',
+                    bearishCandle: '#ffffff',
+                    bullishCandleBody: '#9c27b0',
+                    bullishCandleBorder: '#9c27b0',
+                    bullishCandleWick: '#9c27b0',
+                    bearishCandleBody: '#ffffff',
+                    bearishCandleBorder: '#ffffff',
+                    bearishCandleWick: '#ffffff',
+                    // Sidebar colors
+                    longsColor: '#9c27b0',
+                    shortsColor: '#ffffff',
+                    // Bid/Ask strength colors
+                    bidStrengthColor: 'rgba(156, 39, 176, 0.7)',
+                    askStrengthColor: 'rgba(255, 255, 255, 0.7)',
+                    // Liquidation colors
+                    sellLiquidationColor: 'rgba(255, 255, 255, 1.0)',
+                    buyLiquidationColor: 'rgba(156, 39, 176, 1.0)',
+                    // VWAP colors
+                    vwapLine: '#9c27b0',
+                    vwapTags: '#9c27b0',
+                    vwapBands: 'rgba(156, 39, 176, 0.3)'
+                };
+                this.saveColors();
+                this.updateColorInputs();
+                drawChart(); // Redraw chart with new colors
+            });
+            presetContainer.appendChild(purpleWhitePreset);
+
+            // Dark Blue & White preset
+            const blueWhitePreset = document.createElement('button');
+            blueWhitePreset.className = 'preset-button';
+            blueWhitePreset.innerHTML = '<span style="color: #1976d2;">Blue</span> & <span style="color: #ffffff;">White</span>';
+            blueWhitePreset.style.padding = '15px';
+            blueWhitePreset.style.background = 'linear-gradient(135deg, #0d1a2d, #162c4c)';
+            blueWhitePreset.style.border = '1px solid #444';
+            blueWhitePreset.style.borderRadius = '6px';
+            blueWhitePreset.style.color = 'white';
+            blueWhitePreset.style.cursor = 'pointer';
+            blueWhitePreset.style.fontSize = '16px';
+            blueWhitePreset.style.textAlign = 'center';
+            blueWhitePreset.style.transition = 'all 0.2s ease';
+
+            // Add hover effect
+            blueWhitePreset.addEventListener('mouseenter', () => {
+                blueWhitePreset.style.backgroundColor = '#444';
+                blueWhitePreset.style.transform = 'scale(1.02)';
+            });
+
+            blueWhitePreset.addEventListener('mouseleave', () => {
+                blueWhitePreset.style.backgroundColor = '#333';
+                blueWhitePreset.style.transform = 'scale(1)';
+            });
+
+            blueWhitePreset.addEventListener('click', () => {
+                // Apply Dark Blue & White preset
+                this.colors = {
+                    ...this.colors, // Keep background and other colors
+                    // Candle colors
+                    bullishCandle: '#1976d2',
+                    bearishCandle: '#ffffff',
+                    bullishCandleBody: '#1976d2',
+                    bullishCandleBorder: '#1976d2',
+                    bullishCandleWick: '#1976d2',
+                    bearishCandleBody: '#ffffff',
+                    bearishCandleBorder: '#ffffff',
+                    bearishCandleWick: '#ffffff',
+                    // Sidebar colors
+                    longsColor: '#1976d2',
+                    shortsColor: '#ffffff',
+                    // Bid/Ask strength colors
+                    bidStrengthColor: 'rgba(25, 118, 210, 0.7)',
+                    askStrengthColor: 'rgba(255, 255, 255, 0.7)',
+                    // Liquidation colors
+                    sellLiquidationColor: 'rgba(255, 255, 255, 1.0)',
+                    buyLiquidationColor: 'rgba(25, 118, 210, 1.0)',
+                    // VWAP colors
+                    vwapLine: '#1976d2',
+                    vwapTags: '#1976d2',
+                    vwapBands: 'rgba(25, 118, 210, 0.3)'
+                };
+                this.saveColors();
+                this.updateColorInputs();
+                drawChart(); // Redraw chart with new colors
+            });
+            presetContainer.appendChild(blueWhitePreset);
+
+            section.appendChild(presetContainer);
+            return section;
+        };
+
         // Add chart color options to the Chart tab
         createColorSection('Chart Colors', chartColorOptions, chartTab.leftColumn);
+
+        // Add description to the Presets tab
+        const presetsDescription = document.createElement('div');
+        presetsDescription.style.marginBottom = '20px';
+        presetsDescription.style.color = '#aaa';
+        presetsDescription.style.fontSize = '14px';
+        presetsDescription.style.lineHeight = '1.4';
+        presetsDescription.innerHTML = 'These presets will change the colors of chart elements while keeping your background color unchanged. Click on a preset to apply it.';
+        presetsTab.leftColumn.appendChild(presetsDescription);
+
+        // Add presets section to the Presets tab
+        presetsTab.leftColumn.appendChild(createPresetsSection());
 
         // Add candle color options to the Chart tab
         createColorSection('Candle Colors', candleColorOptions, chartTab.rightColumn);
@@ -531,6 +839,9 @@ class ColorCustomizer {
 
         // Add VWAP color options to the VWAP tab
         createColorSection('VWAP Colors', vwapColorOptions, vwapTab.leftColumn);
+
+        // Add bid/ask strength color options to the Strength tab
+        createColorSection('Bid/Ask Strength Colors', strengthColorOptions, strengthTab.leftColumn);
 
         // Add other color options to the Other tab
         createColorSection('Other Colors', otherColorOptions, otherTab.leftColumn);
@@ -641,6 +952,8 @@ class ColorCustomizer {
             { id: 'liquidationArrowHeadSize', label: 'Arrow Head Size', min: 0.2, max: 1.5, step: 0.1 }
         ];
 
+
+
         // Add opacity sliders to VWAP tab
         createSliderSection('VWAP Opacity', vwapOpacityOptions, this.opacitySettings, vwapTab.rightColumn);
 
@@ -649,6 +962,8 @@ class ColorCustomizer {
 
         // Add size sliders to Liquidations tab
         createSliderSection('Liquidation Arrow Size', liquidationSizeOptions, this.sizeSettings, liquidationsTab.rightColumn);
+
+
 
         // Add tabs container and content container to the menu
         menu.appendChild(tabsContainer);
@@ -813,36 +1128,100 @@ class ColorCustomizer {
 
         menu.appendChild(resetButton);
 
+        // Add a method to show the menu
+        this.showMenu = () => {
+            overlay.style.display = 'flex';
+            toggleButton.classList.add('active');
+            console.log('Color menu shown');
+        };
+
+        // Add a method to hide the menu
+        this.hideMenu = () => {
+            overlay.style.display = 'none';
+            toggleButton.classList.remove('active');
+            console.log('Color menu hidden');
+        };
+
         // Toggle menu visibility
         toggleButton.addEventListener('click', () => {
-            overlay.style.display = overlay.style.display === 'none' || overlay.style.display === '' ? 'flex' : 'none';
-            toggleButton.style.backgroundColor = overlay.style.display === 'none' ? '#2196F3' : '#1976D2';
+            // Force display to flex to ensure it's visible
+            if (overlay.style.display === 'none' || overlay.style.display === '') {
+                this.showMenu();
+            } else {
+                this.hideMenu();
+            }
+            console.log('Color menu visibility toggled:', overlay.style.display);
         });
 
         // Close menu when clicking outside of it
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) {
-                overlay.style.display = 'none';
-                toggleButton.style.backgroundColor = '#2196F3';
+                this.hideMenu();
             }
         });
 
         // Close menu when pressing ESC key
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && overlay.style.display !== 'none') {
-                overlay.style.display = 'none';
-                toggleButton.style.backgroundColor = '#2196F3';
+                this.hideMenu();
             }
         });
 
         // Add to document
-        document.body.appendChild(toggleButton);
+        const buttonsContainer = document.getElementById('sidebar-buttons');
+        if (buttonsContainer) {
+            buttonsContainer.appendChild(toggleButton);
+        } else {
+            console.error('Sidebar buttons container not found when adding color customizer button');
+            // We'll use the fallback button instead, which is already added to the document
+            fallbackButton.style.display = 'block';
+        }
+
+        // Add event listener to check sidebar visibility and show/hide fallback button accordingly
+        const checkSidebarVisibility = () => {
+            const sidebar = document.getElementById('sidebar');
+            // Only show fallback button if sidebar is hidden AND the arrow button is not visible
+            // This ensures we don't have two ways to show the sidebar at the same time
+            if (sidebar && (sidebar.style.display === 'none' || !buttonsContainer)) {
+                // Check if the arrow button exists
+                if (window.sidebarArrowButton && window.sidebarArrowButton.style.display !== 'none') {
+                    // Arrow button is visible, hide our fallback
+                    fallbackButton.style.display = 'none';
+                } else {
+                    // Arrow button is not visible, show our fallback
+                    fallbackButton.style.display = 'block';
+                }
+            } else {
+                fallbackButton.style.display = 'none';
+            }
+        };
+
+        // Check initially
+        checkSidebarVisibility();
+
+        // Set up a MutationObserver to watch for changes to the sidebar's display property
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar) {
+            const observer = new MutationObserver(checkSidebarVisibility);
+            observer.observe(sidebar, { attributes: true, attributeFilter: ['style'] });
+        }
+
+        // Also check when the DOM is fully loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            const sidebarButtons = document.getElementById('sidebar-buttons');
+            if (sidebarButtons && !sidebarButtons.contains(toggleButton)) {
+                sidebarButtons.appendChild(toggleButton);
+            }
+            checkSidebarVisibility();
+        });
+
         overlay.appendChild(menu);
         document.body.appendChild(overlay);
 
         // Store references
         this.menu = menu;
         this.toggleButton = toggleButton;
+        this.fallbackButton = fallbackButton;
         this.overlay = overlay;
     }
 
@@ -864,7 +1243,7 @@ class ColorCustomizer {
             vwapTags: '#ff9800',
             vwapBands: 'rgba(255, 152, 0, 0.2)',
             crosshair: 'rgba(150, 150, 150, 0.5)',
-            sidebarBackground: 'rgba(31, 41, 55, 0.95)',
+            sidebarBackground: 'rgb(19, 23, 34)',
             longsColor: '#26a69a',
             shortsColor: '#ef5350',
             // Liquidation colors
@@ -895,3 +1274,15 @@ class ColorCustomizer {
 
 // Create global instance
 window.colorCustomizer = new ColorCustomizer();
+
+// Add global method to show the color customization menu
+window.showColorCustomizer = function() {
+    if (window.colorCustomizer) {
+        window.colorCustomizer.showMenu();
+    }
+};
+
+// Make sure toggleButton is accessible globally
+if (window.colorCustomizer && window.colorCustomizer.toggleButton) {
+    window.colorCustomizer.toggleButton = window.colorCustomizer.toggleButton;
+}

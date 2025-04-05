@@ -33,7 +33,7 @@ class CoinManager {
                 symbol: 'SOL',
                 bybitSymbol: 'SOLUSDT',
                 bitstampSymbol: 'solusd',
-                color: '#14F195', // Solana green
+                color: '#9945FF', // Solana purple
                 minLiquidationSize: 100, // Minimum size in SOL
                 minLiquidationValue: 50000, // Minimum value in USD
                 pricePrecision: 3,
@@ -51,6 +51,18 @@ class CoinManager {
                 pricePrecision: 2,
                 sizePrecision: 1,
                 valueScaleFactor: 0.02 // LTC is about 2% of BTC's value
+            },
+            XRP: {
+                name: 'Ripple',
+                symbol: 'XRP',
+                bybitSymbol: 'XRPUSDT',
+                bitstampSymbol: 'xrpusd',
+                color: '#23292F', // XRP dark blue/black
+                minLiquidationSize: 100000, // Minimum size in XRP
+                minLiquidationValue: 50000, // Minimum value in USD
+                pricePrecision: 4,
+                sizePrecision: 0,
+                valueScaleFactor: 0.005 // XRP is about 0.5% of BTC's value
             }
         };
 
@@ -99,6 +111,12 @@ class CoinManager {
 
             // Update page title
             this.updateTitle();
+
+            // Update the threshold slider if the function exists
+            if (window.updateThresholdSlider) {
+                console.log('Calling updateThresholdSlider from coin-manager');
+                setTimeout(() => window.updateThresholdSlider(), 100);
+            }
 
             return true;
         }

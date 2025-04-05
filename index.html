@@ -6,70 +6,179 @@
     <title>BTC/USDT: Loading...</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="sidebar.css">
+    <link rel="stylesheet" href="top-sidebar.css">
+    <link rel="stylesheet" href="connection-meter.css">
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <style>
+        /* Top right corner background fix */
+        #top-right-background-fix {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 100px; /* Increased from 70px to accommodate buttons */
+            height: 40px; /* Match top sidebar height */
+            background-color: #131722; /* Match chart background */
+            z-index: 99; /* Below other elements */
+            pointer-events: none; /* Allow clicks to pass through */
+            border-left: 1px solid rgba(150, 150, 150, 0.4); /* Add left border for separator matching other lines */
+            box-sizing: border-box; /* Ensure border is included in height calculation */
+            box-shadow: 0 1px 0 0 rgba(150, 150, 150, 0.4); /* Use box-shadow instead of border for exact alignment */
+        }
+
+        /* Top right buttons container */
+        #top-right-buttons {
+            position: fixed;
+            top: 6px; /* Adjusted to center vertically in the top bar */
+            right: 2px; /* Adjusted for better positioning */
+            display: flex;
+            gap: 15px; /* Increased for better spacing between buttons */
+            z-index: 101; /* Above the corner fix */
+        }
+
+        /* Button styling */
+        #top-right-buttons button {
+            width: 28px; /* Increased from 24px */
+            height: 28px; /* Increased from 24px */
+            border-radius: 4px; /* Increased from 3px */
+            background-color: rgba(40, 40, 40, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            padding: 0;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); /* Added shadow for better visibility */
+            box-sizing: border-box; /* Ensure consistent sizing */
+        }
+
+        /* Specific styling for screenshot button to ensure it's aligned */
+        #screenshot-button {
+            margin-right: -8px; /* Slight adjustment to align with fullscreen button */
+        }
+
+        #top-right-buttons button:hover {
+            background-color: rgba(60, 60, 60, 0.8);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        #top-right-buttons button:active {
+            transform: scale(0.95);
+        }
+
+        #top-right-buttons svg {
+            width: 15px;
+            height: 15px;
+        }
+    </style>
 </head>
-<body>
+<body style="background-color: #131722;">
+    <!-- Fixed overlay for the top right corner with left border for separator -->
+    <div id="top-right-background-fix"></div>
+
+    <!-- Top right buttons container -->
+    <div id="top-right-buttons">
+        <button id="screenshot-button" title="Take Screenshot">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+        </button>
+        <button id="fullscreen-button" title="Toggle Fullscreen">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+            </svg>
+        </button>
+    </div>
+    <div id="top-sidebar">
+        <div id="threshold-slider-container">
+            <div class="threshold-label">Min Order Value: <span id="threshold-coin">BTC</span></div>
+            <div class="threshold-slider-wrapper">
+                <div class="slider-container">
+                    <span class="slider-delimiter min">Min</span>
+                    <input type="range" id="threshold-slider" min="25" max="1000" step="25" value="400">
+                    <span class="slider-delimiter max">Max</span>
+
+                </div>
+                <div class="input-container">
+                    <input type="number" id="threshold-input" min="25" max="1000" value="400">
+                    <span class="unit">kUSD</span>
+                    <span id="recommended-value">(Recommended: 400k)</span>
+                    <button id="set-recommended" title="Set to recommended value">Use recommended</button>
+                </div>
+            </div>
+        </div>
+    </div>
     <div id="container">
         <div id="coin-indicator"></div>
         <div id="sidebar">
-            <div class="sidebar-header">Longs vs shorts</div>
-            <div class="ratio-container">
-                <div class="ratio-label">Imbalance:</div>
-                <div id="imbalance">Loading...</div>
-            </div>
-            <div class="bar-container">
-                <div id="longs-bar" class="ratio-bar"></div>
-                <div id="shorts-bar" class="ratio-bar"></div>
-            </div>
-            <div class="labels-container">
-                <div class="label longs-label">Longs</div>
-                <div class="label shorts-label">Shorts</div>
-            </div>
-            <div class="percentages-container">
-                <div class="percentage-item">
-                    <div class="percentage-label longs-label">Longs %:</div>
-                    <div id="longs-percentage" class="percentage-value">0%</div>
+            <div class="sidebar-header">Longs vs Shorts</div>
+            <div class="imbalance-container">
+                <div class="ratio-container">
+                    <div class="ratio-label">Imbalance:</div>
+                    <div id="imbalance">Loading...</div>
                 </div>
-                <div class="percentage-item">
-                    <div class="percentage-label shorts-label">Shorts %:</div>
-                    <div id="shorts-percentage" class="percentage-value">0%</div>
+                <div class="bar-container">
+                    <div id="longs-bar" class="ratio-bar"></div>
+                    <div id="shorts-bar" class="ratio-bar"></div>
                 </div>
-                <div class="percentage-item">
-                    <div class="percentage-label">Imbalance:</div>
-                    <div id="imbalance-usd" class="percentage-value">$0</div>
+                <div class="labels-container">
+                    <div class="label longs-label">Longs</div>
+                    <div class="label shorts-label">Shorts</div>
                 </div>
-                <div class="percentage-item">
-                    <div class="percentage-label" id="imbalance-coin-label">Imbalance BTC:</div>
-                    <div id="imbalance-btc" class="percentage-value">0</div>
-                </div>
-            </div>
-            <div class="stats-container">
-                <div class="stat-item">
-                    <div class="stat-label" id="total-coin-label">Total BTC:</div>
-                    <div id="total-volume" class="stat-value">0</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label">Total $:</div>
-                    <div id="total-usd" class="stat-value">$0</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label" id="longs-coin-label">Longs BTC:</div>
-                    <div id="longs-volume" class="stat-value">0</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label">Longs $:</div>
-                    <div id="longs-usd" class="stat-value">$0</div>
-                </div>
+                <div class="sidebar-separator"></div>
+                <div class="percentages-container">
+                    <div class="percentage-item">
+                        <div class="percentage-label longs-label">Longs %:</div>
+                        <div id="longs-percentage" class="percentage-value">0%</div>
+                    </div>
+                    <div class="percentage-item">
+                        <div class="percentage-label shorts-label">Shorts %:</div>
+                        <div id="shorts-percentage" class="percentage-value">0%</div>
+                    </div>
+                    <div class="percentage-item">
+                        <div class="percentage-label">Imbalance:</div>
+                        <div id="imbalance-usd" class="percentage-value">$0</div>
+                    </div>
+                    <div class="percentage-item">
+                        <div class="percentage-label" id="imbalance-coin-label">Imbalance BTC:</div>
+                        <div id="imbalance-btc" class="percentage-value">0</div>
+                    </div>
 
-                <div class="stat-item">
-                    <div class="stat-label" id="shorts-coin-label">Shorts BTC:</div>
-                    <div id="shorts-volume" class="stat-value">0</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label">Shorts $:</div>
-                    <div id="shorts-usd" class="stat-value">$0</div>
-                </div>
+                    <div class="sidebar-separator stats-separator"></div>
 
+                    <div class="stat-item">
+                        <div class="stat-label" id="total-coin-label">Total BTC:</div>
+                        <div id="total-volume" class="stat-value">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Total $:</div>
+                        <div id="total-usd" class="stat-value">$0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label" id="longs-coin-label">Longs BTC:</div>
+                        <div id="longs-volume" class="stat-value">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Longs $:</div>
+                        <div id="longs-usd" class="stat-value">$0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label" id="shorts-coin-label">Shorts BTC:</div>
+                        <div id="shorts-volume" class="stat-value">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Shorts $:</div>
+                        <div id="shorts-usd" class="stat-value">$0</div>
+                    </div>
+                    <div class="stat-spacer"></div>
+                </div>
+            </div>
 
+            <!-- Buttons container for sidebar controls -->
+            <div class="sidebar-buttons-container" id="sidebar-buttons">
+                <!-- Buttons will be added here via JavaScript -->
             </div>
         </div>
         <canvas id="chart"></canvas>
@@ -85,6 +194,8 @@
     <script src="init-updater.js"></script>
     <script src="script.js"></script>
     <script src="coin-indicator.js"></script>
+    <script src="connection-meter.js"></script>
     <script src="test-updater.js"></script>
+    <script src="screenshot.js"></script>
 </body>
 </html>

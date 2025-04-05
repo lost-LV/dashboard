@@ -12,8 +12,14 @@ function updateCoinIndicator() {
     // Format price according to coin's precision
     const formattedPrice = currentPrice.toFixed(coin.pricePrecision || 2);
 
-    // Update the indicator content - only show symbol
-    coinIndicator.innerHTML = `${coin.symbol}`;
+    // Update the indicator content - show logo and symbol
+    // Add special handling for Bitcoin logo to ensure visibility
+    const logoStyle = coinSymbol === 'btc' ?
+        'width: 16px; height: 16px; vertical-align: middle; margin-right: 5px; background-color: transparent;' :
+        'width: 16px; height: 16px; vertical-align: middle; margin-right: 5px;';
+
+    const logoHtml = `<img src="images/crypto-logos/${coinSymbol}.svg" alt="${coin.name} Logo" style="${logoStyle}">`;
+    coinIndicator.innerHTML = `${logoHtml}${coin.symbol}`;
 
     // Update the border color to match the coin's color
     coinIndicator.style.borderColor = coin.color || '#F7931A';

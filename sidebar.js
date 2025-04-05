@@ -263,19 +263,23 @@ class ShortsLongsRatio {
         selectorContainer.style.bottom = '30px'; // Position above version display
         selectorContainer.style.left = '0';
         selectorContainer.style.width = '100%';
-        selectorContainer.style.height = '30px';
+        selectorContainer.style.height = '50px'; // Increased from 45px for larger icons
+        selectorContainer.style.minHeight = '50px'; // Increased from 45px for larger icons
         selectorContainer.style.display = 'flex';
-        selectorContainer.style.justifyContent = 'center';
+        selectorContainer.style.justifyContent = 'center'; // Changed to center for better alignment
         selectorContainer.style.alignItems = 'center';
+        selectorContainer.style.padding = '8px 2px'; // Reduced horizontal padding to maximize space for buttons
         selectorContainer.style.backgroundColor = '#131722';
-        selectorContainer.style.borderTop = '1px solid rgba(255, 255, 255, 0.1)';
+        selectorContainer.style.borderTop = '1px solid rgba(150, 150, 150, 0.4)'; // Restored with updated color
         selectorContainer.style.zIndex = '9';
 
         // Create button group for coin selection
         const buttonGroup = document.createElement('div');
         buttonGroup.style.display = 'flex';
-        buttonGroup.style.justifyContent = 'space-between';
-        buttonGroup.style.width = '90%';
+        buttonGroup.style.justifyContent = 'center'; // Center the buttons
+        buttonGroup.style.width = '100%'; // Use full width
+        buttonGroup.style.flexWrap = 'nowrap'; // Prevent wrapping
+        buttonGroup.style.gap = '2px'; // Reduced gap between buttons for better fit
 
         // Get available coins
         const coins = Object.keys(window.coinManager.coins);
@@ -284,29 +288,61 @@ class ShortsLongsRatio {
         coins.forEach(coinSymbol => {
             const coin = window.coinManager.coins[coinSymbol];
             const button = document.createElement('button');
-            button.textContent = coinSymbol;
-            button.style.flex = '1';
-            button.style.margin = '0 2px';
-            button.style.padding = '2px 0';
-            button.style.backgroundColor = this.currentCoin.symbol === coinSymbol ? coin.color : 'transparent';
-            button.style.color = this.currentCoin.symbol === coinSymbol ? '#000' : '#fff';
+
+            // Create image element for the logo
+            const logoImg = document.createElement('img');
+
+            // Special case for Bitcoin to ensure it works and is visible
+            if (coinSymbol === 'BTC') {
+                logoImg.src = 'images/crypto-logos/btc.svg';
+
+                // No special styling for Bitcoin logo - using original darker style
+            } else {
+                logoImg.src = `images/crypto-logos/${coinSymbol.toLowerCase()}.svg`;
+            }
+
+            logoImg.alt = `${coin.name} Logo`;
+            logoImg.style.width = '20px';
+            logoImg.style.height = '20px';
+            logoImg.style.display = 'block';
+            logoImg.style.margin = '0 auto';
+
+            // Add background for better visibility of light-colored icons like XRP
+            if (coinSymbol === 'XRP') {
+                logoImg.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                logoImg.style.borderRadius = '50%';
+                logoImg.style.padding = '1px'; // Reduced padding
+                logoImg.style.width = '16px'; // Smaller to ensure it fits properly
+                logoImg.style.height = '16px'; // Smaller to ensure it fits properly
+            }
+
+            // Clear text content and add the logo image
+            button.appendChild(logoImg);
+
+            // Add title attribute for tooltip on hover
+            button.title = coin.name;
+
+            button.style.flex = '0 0 auto';
+            button.style.margin = '0 1px'; // Reduced margin for better fit
+            button.style.width = '28px'; // Adjusted size to ensure all buttons fit
+            button.style.height = '28px'; // Adjusted size to ensure all buttons fit
+            button.style.padding = '2px'; // Adjusted padding to ensure all buttons fit
+            button.style.backgroundColor = this.currentCoin.symbol === coinSymbol ? '#333' : 'transparent';
             button.style.border = `1px solid ${coin.color}`;
-            button.style.borderRadius = '3px';
-            button.style.fontSize = '10px';
-            button.style.fontWeight = 'bold';
-            button.style.cursor = 'pointer';
-            button.style.transition = 'all 0.2s ease';
+            button.style.borderRadius = '4px';
 
             // Add hover effect
             button.addEventListener('mouseenter', () => {
                 if (this.currentCoin.symbol !== coinSymbol) {
-                    button.style.backgroundColor = `${coin.color}33`; // 20% opacity
+                    button.style.backgroundColor = '#222';
+                    button.style.borderWidth = '2px';
                 }
             });
 
             button.addEventListener('mouseleave', () => {
                 if (this.currentCoin.symbol !== coinSymbol) {
                     button.style.backgroundColor = 'transparent';
+                    button.style.borderWidth = '1px';
                 }
             });
 
@@ -337,15 +373,41 @@ class ShortsLongsRatio {
         if (this.coinSelectorContainer) {
             const buttons = this.coinSelectorContainer.querySelectorAll('button');
             buttons.forEach(button => {
-                const coinSymbol = button.textContent;
+                // Get the coin symbol from the image src attribute
+                const img = button.querySelector('img');
+                if (!img) return;
+
+                const imgSrc = img.src;
+                const coinSymbol = imgSrc.split('/').pop().split('.')[0].toUpperCase();
                 const coinColor = window.coinManager.coins[coinSymbol].color;
 
+                // Create a completely different approach for active/inactive buttons
                 if (coinSymbol === coin.symbol) {
-                    button.style.backgroundColor = coinColor;
-                    button.style.color = '#000';
+                    // For active buttons
+                    button.style.backgroundColor = '#333'; // Dark background for all active buttons
+                    button.style.borderColor = coinColor;
+                    button.style.borderWidth = '2px';
+
+                    // No special styling for Bitcoin logo - using original darker style
                 } else {
+                    // For inactive buttons
                     button.style.backgroundColor = 'transparent';
-                    button.style.color = '#fff';
+                    button.style.borderWidth = '1px';
+
+                    // Reset most logo styles but keep XRP styling
+                    if (coinSymbol !== 'XRP') {
+                        img.style.backgroundColor = '';
+                        img.style.borderRadius = '';
+                        img.style.padding = '';
+                        img.style.boxShadow = '';
+                    } else {
+                        // Maintain XRP styling for visibility
+                        img.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                        img.style.borderRadius = '50%';
+                        img.style.padding = '1px';
+                        img.style.width = '16px'; // Smaller to ensure it fits properly
+                        img.style.height = '16px'; // Smaller to ensure it fits properly
+                    }
                 }
             });
         }

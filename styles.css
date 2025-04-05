@@ -17,15 +17,21 @@ body, html {
 #container {
     display: flex;
     width: 100vw;
-    height: 100vh;
+    height: calc(100vh - 40px); /* Subtract top sidebar height */
     /* Prevent container from resizing based on content */
     box-sizing: border-box;
     /* Ensure consistent sizing across browsers */
     position: fixed;
-    top: 0;
+    top: 40px; /* Position below top sidebar */
     left: 0;
     right: 0;
     bottom: 0;
+    overflow: visible; /* Ensure time scale is visible even if it extends beyond container */
+}
+
+/* Adjust container when sidebar is visible */
+.sidebar-visible #container {
+    padding-left: 160px; /* Match sidebar width */
 }
 
 #coin-indicator {
@@ -38,6 +44,10 @@ body, html {
     padding: 5px 10px;
     border-radius: 3px;
     font-size: 14px;
+    display: flex;
+    align-items: center;
+    min-width: 60px;
+    justify-content: center;
     font-weight: bold;
     text-align: center;
     z-index: 1000;
@@ -51,4 +61,12 @@ body, html {
     /* Ensure consistent rendering */
     image-rendering: -webkit-optimize-contrast;
     image-rendering: crisp-edges;
+    /* Ensure the canvas is visible and properly sized */
+    display: block;
+    position: relative;
+    z-index: 1;
 }
+
+
+
+
