@@ -55,15 +55,15 @@
 
 /* Special styling for the separator before buttons */
 .buttons-separator {
-    margin-top: 6px;
-    margin-bottom: 6px;
+    margin-top: 7px;
+    margin-bottom: 7px;
     /* Keep the full width style from the parent class */
 }
 
 /* Special styling for the separator before stats */
 .stats-separator {
-    margin-top: 6px;
-    margin-bottom: 6px;
+    margin-top: 7px;
+    margin-bottom: 7px;
     /* Keep the full width style from the parent class */
 }
 
@@ -188,14 +188,19 @@
 
 /* Sidebar buttons container */
 .sidebar-buttons-container {
-    margin-top: 8px; /* No margin needed with separator */
-    margin-bottom: 8px; /* Reduced from 15px */
+    margin-top: 8px;
+    margin-bottom: 8px;
     display: flex;
     flex-direction: column;
-    gap: 6px; /* Reduced from 8px */
-    padding: 8px 10px; /* Reduced top/bottom padding from 10px to 8px */
+    gap: 7px; /* Slightly increased from original 6px */
+    padding: 9px 10px; /* Slightly increased top/bottom padding */
     border-top: none; /* Remove border as we're using separators */
     background-color: rgba(19, 23, 34, 0.7); /* Slightly darker background */
+}
+
+/* Remove margin-bottom from the last button in the container */
+.sidebar-buttons-container > button:last-child {
+    margin-bottom: 0;
 }
 
 /* Sidebar button styling - modern TradingView-like style */
@@ -204,8 +209,8 @@
     align-items: center; /* Vertically center the content */
     justify-content: flex-start; /* Align content to the left */
     position: relative; /* Ensure the button is the parent for positioning */
-    margin-bottom: 6px; /* Reduced from 8px */
-    padding: 8px 10px; /* Reduced from 10px 12px */
+    margin-bottom: 6px;
+    padding: 9px 10px; /* Slightly increased padding */
     font-size: 12px; /* Reduced from 14px */
     font-weight: 500; /* Slightly bold text */
     letter-spacing: 0.5px; /* Improve text spacing */

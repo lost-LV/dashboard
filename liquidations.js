@@ -3,7 +3,7 @@
     // Configuration
     const config = {
         barInterval: 300000, // 5 minute, matching our chart interval
-        maxLiquidations: 1000, // Limit stored liquidations
+        maxLiquidations: 1000, // Limit stored liquidations per coin
         updateThrottle: 100, // Throttle updates
         minMarkerSize: 1.5, // Minimum arrow size (for 50k liquidations) - reduced from 2
         maxMarkerSize: 4, // Maximum arrow size (for 1M+ liquidations) - reduced from 8
@@ -16,6 +16,8 @@
         newLiquidationWindow: 86400000, // Show liquidations from the last 24 hours (permanent display)
         liveIndicatorDuration: 86400000, // Keep the live indicator permanently (24 hours)
         valueScaleFactor: 1, // Default scale factor for BTC
+        // List of supported coins
+        supportedCoins: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'LTCUSDT', 'XRPUSDT']
     };
 
     // Utility functions
@@ -53,7 +55,16 @@
         constructor() {
             // Get current pair from coin manager if available
             this.pair = window.coinManager ? window.coinManager.getCurrentCoin().bybitSymbol : 'BTCUSDT';
-            this.liquidations = []; // Raw liquidation events
+
+            // Store liquidations for each coin separately
+            this.liquidationsByCoin = {};
+
+            // Initialize liquidation arrays for each supported coin
+            config.supportedCoins.forEach(coin => {
+                this.liquidationsByCoin[coin] = [];
+            });
+
+            this.liquidations = []; // Raw liquidation events for current coin (for backward compatibility)
             this.liveLiquidations = []; // Store recent liquidations for live indicator
             this.throttledUpdateMarkers = throttle(this.updateMarkers.bind(this), config.updateThrottle);
             this.markers = []; // Store markers for rendering
@@ -75,18 +86,15 @@
             // Connect only to Bybit WebSocket for liquidations
             this.connectToBybitWebSocket();
 
-            // We don't add test liquidations on startup anymore - only showing new liquidations
+            // Simulated liquidations are disabled - only using real liquidations
+            // this.setupSimulatedLiquidations();
 
             // Listen for liquidation events for all supported coins
-            const supportedCoins = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'LTCUSDT'];
-
-            supportedCoins.forEach(pair => {
+            config.supportedCoins.forEach(pair => {
                 window.addEventListener(`liquidation-${pair}`, (event) => {
-                    // Only process liquidations for the current pair
-                    if (pair === this.pair) {
-                        const liq = event.detail;
-                        this.addLiquidation(liq);
-                    }
+                    // Process liquidations for all pairs, not just the current one
+                    const liq = event.detail;
+                    this.addLiquidation(liq, pair);
                 });
             });
 
@@ -103,7 +111,7 @@
             window.liquidationManager = this;
 
             // Log that initialization is complete
-            console.log(`Liquidation manager initialized for ${this.pair} with Bybit data - only showing new liquidations`);
+            console.log(`Liquidation manager initialized for all coins with Bybit data - showing new liquidations for all coins`);
         }
 
         // Update configuration based on the current coin
@@ -131,19 +139,31 @@
             // Update config for the new coin
             this.updateConfigForCurrentCoin();
 
-            // Clear existing liquidations
-            this.liquidations = [];
-            this.liveLiquidations = []; // Keep this for backward compatibility
+            // Clear markers but keep liquidations for all coins
             this.markers = [];
 
-            // Reconnect to WebSocket with new pair
-            this.connectToBybitWebSocket();
+            // Make sure the liquidationsByCoin object has an array for this pair
+            if (!this.liquidationsByCoin[this.pair]) {
+                this.liquidationsByCoin[this.pair] = [];
+            }
 
-            // Update markers
+            // Update the main liquidations array for backward compatibility
+            this.liquidations = this.liquidationsByCoin[this.pair];
+
+            // No need to reconnect to WebSocket since we're already subscribed to all coins
+
+            // Update markers for the new coin
             this.updateMarkers();
+
+            console.log(`Switched to showing liquidations for ${this.pair}. Have ${this.liquidations.length} liquidations for this coin.`);
         }
 
-        // Test liquidations functionality removed
+        // Generate test liquidations for all coins - disabled to only show real liquidations
+        generateTestLiquidationsForAllCoins() {
+            console.log('Test liquidations are disabled - only showing real liquidations from Bybit');
+            // No test liquidations will be generated
+            return;
+        }
 
         // Binance WebSocket connection removed - using only Bybit for liquidations
 
@@ -154,18 +174,17 @@
 
             // Subscribe to liquidation streams for all supported coins
             bybitWs.onopen = () => {
-                const supportedCoins = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'LTCUSDT'];
                 console.log(`Connected to Bybit WebSocket for liquidations`);
 
                 // Subscribe to all supported coins
                 const subscribeMsg = {
                     op: 'subscribe',
-                    args: supportedCoins.map(pair => `liquidation.${pair}`),
+                    args: config.supportedCoins.map(pair => `liquidation.${pair}`),
                     req_id: 'liquidation_all_coins'
                 };
                 bybitWs.send(JSON.stringify(subscribeMsg));
 
-                console.log(`Subscribed to liquidation streams for: ${supportedCoins.join(', ')}`);
+                console.log(`Subscribed to liquidation streams for: ${config.supportedCoins.join(', ')}`);
                 console.log(`Currently displaying liquidations for: ${this.pair}`);
 
                 // Log subscription message for debugging
@@ -184,12 +203,7 @@
                         const pair = data.topic.replace('liquidation.', '');
                         console.log(`Bybit ${pair} liquidation:`, data);
 
-                        // Only process if it matches our current pair
-                        if (pair !== this.pair) {
-                            console.log(`Ignoring liquidation for ${pair} (currently showing ${this.pair})`);
-                            return;
-                        }
-
+                        // Process liquidations for all pairs, not just the current one
                         const liqData = data.data;
 
                         // Process the data according to the specified format:
@@ -206,12 +220,12 @@
                             size: size,
                             side: side,
                             time: timestamp,
-                            pair: this.pair,
+                            pair: pair,
                             dollarValue: price * size
                         };
 
-                        // Add the liquidation
-                        this.addLiquidation(liquidation);
+                        // Add the liquidation to the appropriate coin's array
+                        this.addLiquidation(liquidation, pair);
                     }
                 } catch (error) {
                     console.error('Error processing Bybit liquidation:', error);
@@ -231,45 +245,9 @@
         }
 
         setupSimulatedLiquidations() {
-            // Instead of generating random liquidations, we'll use a more realistic approach
-            // that only creates liquidations when price moves significantly
-
-            let lastPrice = window.btcPrice || 65000;
-            let priceThreshold = 50; // Minimum price movement to trigger liquidations
-            let lastLiquidationTime = Date.now();
-            let cooldownPeriod = 30000; // 30 seconds minimum between liquidation clusters
-
-            // Check for potential liquidations every 5 seconds
-            setInterval(() => {
-                // Get current price based on selected coin
-                let currentPrice = 65000; // Default fallback
-                if (window.coinManager) {
-                    const coinSymbol = window.coinManager.getCurrentCoin().symbol.toLowerCase();
-                    currentPrice = window[`${coinSymbol}Price`] || currentPrice;
-                } else {
-                    currentPrice = window.btcPrice || currentPrice;
-                }
-                const currentTime = Date.now();
-                const timeSinceLastLiquidation = currentTime - lastLiquidationTime;
-
-                // Only generate liquidations if price has moved significantly AND we're not in cooldown
-                if (Math.abs(currentPrice - lastPrice) > priceThreshold && timeSinceLastLiquidation > cooldownPeriod) {
-                    // Price moved significantly, generate a cluster of liquidations
-                    const isSell = currentPrice < lastPrice; // Price dropped = sell liquidations
-                    const liquidationCount = Math.floor(Math.random() * 3) + 1; // 1-3 liquidations in a cluster
-
-                    // Create a cluster of liquidations
-                    for (let i = 0; i < liquidationCount; i++) {
-                        setTimeout(() => {
-                            this.generateRealisticLiquidation(currentPrice, isSell, currentTime + i * 1000);
-                        }, i * 1000); // Spread liquidations over a few seconds
-                    }
-
-                    lastLiquidationTime = currentTime;
-                }
-
-                lastPrice = currentPrice;
-            }, 5000);
+            // Simulated liquidations are disabled to only show real liquidations
+            console.log('Simulated liquidations are disabled - only showing real liquidations from Bybit');
+            // No simulated liquidations will be generated
         }
 
         generateRealisticLiquidation(currentPrice, isSell, time) {
@@ -280,11 +258,11 @@
             const minSize = config.minIndividualLiquidationSize;
             const scaleFactor = config.valueScaleFactor;
 
-            // Size for liquidations, scaled based on the coin's value
-            let baseSize = (Math.random() * 2 + 1.5) / scaleFactor; // Scale based on coin value
+            // Size for liquidations, scaled based on the coin's value - increased to ensure visibility
+            let baseSize = (Math.random() * 5 + 3) / scaleFactor; // Increased from (Math.random() * 2 + 1.5)
 
             // Adjust size based on side (sells tend to be larger)
-            const size = isSell ? baseSize * 1.2 : baseSize;
+            const size = isSell ? baseSize * 1.5 : baseSize * 1.2; // Increased multipliers
 
             // Price is slightly beyond the current price (that's why it liquidated)
             const priceOffset = isSell ? -50 - Math.random() * 100 : 50 + Math.random() * 100;
@@ -296,6 +274,7 @@
                 size: size,
                 side: isSell ? "Sell" : "Buy",
                 exchange: exchange,
+                pair: this.pair, // Include the pair in the liquidation object
                 dollarValue: price * size // Add dollar value for filtering
             };
 
@@ -306,7 +285,7 @@
             window.dispatchEvent(event);
         }
 
-        addLiquidation(liq) {
+        addLiquidation(liq, pair) {
             // Validate liquidation data
             if (!liq || !liq.price || !liq.size || !liq.side || !liq.time) {
                 // Silently skip invalid liquidation
@@ -322,6 +301,15 @@
             // Ensure liquidation is only from Bybit
             if (liq.exchange !== 'bybit') {
                 // Silently skip liquidations from other exchanges
+                return;
+            }
+
+            // Use the provided pair or the pair from the liquidation object
+            const liquidationPair = pair || liq.pair;
+
+            // Skip if the pair is not supported
+            if (!liquidationPair || !config.supportedCoins.includes(liquidationPair)) {
+                console.log(`Skipping liquidation for unsupported pair: ${liquidationPair}`);
                 return;
             }
 
@@ -357,11 +345,20 @@
                 price: liq.price,
                 size: liq.size,
                 addedAt: Date.now(), // Track when this liquidation was added
-                originalTime: liq.time // Keep original time for reference
+                originalTime: liq.time, // Keep original time for reference
+                pair: liquidationPair // Store which pair this liquidation is for
             };
 
+            // Make sure the liquidationsByCoin object has an array for this pair
+            if (!this.liquidationsByCoin[liquidationPair]) {
+                this.liquidationsByCoin[liquidationPair] = [];
+            }
+
+            // Get the liquidations array for this coin
+            const coinLiquidations = this.liquidationsByCoin[liquidationPair];
+
             // Check if this liquidation already exists to prevent duplicates
-            const isDuplicate = this.liquidations.some(liq =>
+            const isDuplicate = coinLiquidations.some(liq =>
                 liq.time === liquidation.time &&
                 liq.price === liquidation.price &&
                 liq.size === liquidation.size &&
@@ -370,13 +367,17 @@
             );
 
             if (!isDuplicate) {
-                // Add to main collection
-                this.liquidations.push(liquidation);
+                // Add to the coin-specific collection
+                coinLiquidations.push(liquidation);
 
-                // We no longer need to add to liveLiquidations since we're not using them
-                // this.liveLiquidations.push(liquidation);
+                // If this is the current pair, also add to the main liquidations array for backward compatibility
+                if (liquidationPair === this.pair) {
+                    this.liquidations.push(liquidation);
+                    // Update the markers immediately for the current pair
+                    this.throttledUpdateMarkers();
+                }
             } else {
-                console.log('Skipping duplicate liquidation');
+                console.log(`Skipping duplicate liquidation for ${liquidationPair}`);
                 return; // Skip the rest of the processing for duplicates
             }
 
@@ -384,29 +385,36 @@
             // We've set the liveIndicatorDuration to 24 hours, so they'll stay visible
             // No need to remove them with setTimeout
 
-            // Get current coin symbol
-            const coinSymbol = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+            // Get coin symbol for logging
+            let coinSymbol = 'Unknown';
+            if (liquidationPair.includes('BTC')) coinSymbol = 'BTC';
+            else if (liquidationPair.includes('ETH')) coinSymbol = 'ETH';
+            else if (liquidationPair.includes('SOL')) coinSymbol = 'SOL';
+            else if (liquidationPair.includes('LTC')) coinSymbol = 'LTC';
+            else if (liquidationPair.includes('XRP')) coinSymbol = 'XRP';
 
             // Log the accepted liquidation
-            console.log(`Added liquidation: ${liq.size.toFixed(2)} ${coinSymbol} ($${dollarValue.toFixed(0)}) - ${liq.side} - ${liq.exchange}`);
+            console.log(`Added liquidation for ${liquidationPair}: ${liq.size.toFixed(2)} ${coinSymbol} ($${dollarValue.toFixed(0)}) - ${liq.side} - ${liq.exchange}`);
 
-            // Limit the number of stored liquidations
-            if (this.liquidations.length > config.maxLiquidations) this.liquidations.shift();
-
-            // Update the markers
-            this.throttledUpdateMarkers();
+            // Limit the number of stored liquidations for this coin
+            if (coinLiquidations.length > config.maxLiquidations) {
+                coinLiquidations.shift();
+            }
         }
 
         aggregateLiquidations() {
             const aggregated = new Map();
             const now = Date.now();
 
+            // Get the liquidations for the current pair
+            const currentPairLiquidations = this.liquidationsByCoin[this.pair] || [];
+
             // Only include liquidations from the last minute (or configured window)
-            const recentLiquidations = this.liquidations.filter(liq =>
+            const recentLiquidations = currentPairLiquidations.filter(liq =>
                 liq.time >= now - config.newLiquidationWindow
             );
 
-            console.log(`Filtering liquidations: ${this.liquidations.length} total, ${recentLiquidations.length} recent`);
+            console.log(`Filtering liquidations for ${this.pair}: ${currentPairLiquidations.length} total, ${recentLiquidations.length} recent`);
 
             recentLiquidations.forEach((liq) => {
                 // The time should already be aligned with bar intervals, but let's ensure it
@@ -745,9 +753,9 @@
             return;
         }
 
-        // Draw regular liquidation markers
+        // Draw regular liquidation markers for the current pair only
         if (liquidationManager.markers && liquidationManager.markers.length > 0) {
-            console.log(`Drawing ${liquidationManager.markers.length} liquidation markers`);
+            console.log(`Drawing ${liquidationManager.markers.length} liquidation markers for ${liquidationManager.pair}`);
         } else {
             // No markers to draw - this is expected when there are no recent liquidations
             // We don't force an update anymore since we only want to show new liquidations

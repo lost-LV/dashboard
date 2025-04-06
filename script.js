@@ -38,7 +38,9 @@
     let orderbook = { bids: [], asks: [] };
     let bidAskTags = [];
 
-    // Make bidAskTags globally accessible
+    // Make data storage globally accessible
+    window.bars = bars;
+    window.orderbook = orderbook;
     window.bidAskTags = bidAskTags;
 
     // Price variables for different coins
@@ -60,10 +62,25 @@
     // Current trading pair
     let currentPair = window.coinManager ? window.coinManager.getCurrentCoin().bybitSymbol : 'BTCUSDT';
 
+    // Timeframe settings
+    const TIMEFRAME_1M = 1;
+    const TIMEFRAME_5M = 5;
+    const TIMEFRAME_15M = 15;
+    let currentTimeframe = TIMEFRAME_5M; // Default to 5 minute
+
+    // Make timeframe variables globally accessible
+    window.TIMEFRAME_1M = TIMEFRAME_1M;
+    window.TIMEFRAME_5M = TIMEFRAME_5M;
+    window.TIMEFRAME_15M = TIMEFRAME_15M;
+    window.currentTimeframe = currentTimeframe;
+
     // Bar interval and countdown
-    const barIntervalMs = 300000; // 5 minute bars (5 * 60 * 1000 ms)
+    let barIntervalMs = 300000; // 5 minute bars (5 * 60 * 1000 ms) by default
     let barCloseCountdown = 0;
     let countdownInterval = null;
+
+    // Make bar interval globally accessible
+    window.barIntervalMs = barIntervalMs;
 
     // View state
     let viewOffset = 0;
@@ -464,26 +481,63 @@
         // Clear existing orderbook data
         orderbook = { bids: [], asks: [] };
 
+        // Reset chart data
+        bars = [];
+
+        // Reset price scale state variables
+        isPriceScaleDragging = false;
+        priceScaleDragStartY = null;
+        priceScaleDragStartMinPrice = null;
+        priceScaleDragStartMaxPrice = null;
+        isPriceScaleManuallySet = false;
+        minPrice = 0;
+        maxPrice = 100000; // Force recalculation based on new coin's price range
+
+        console.log(`Price scale reset for ${coin.symbol}:`, {
+            isPriceScaleDragging,
+            priceScaleDragStartY,
+            priceScaleDragStartMinPrice,
+            priceScaleDragStartMaxPrice,
+            isPriceScaleManuallySet,
+            minPrice,
+            maxPrice
+        });
+
         // Ensure the sidebar is updated with the new coin
         if (window.shortsLongsRatio) {
             window.shortsLongsRatio.handleCoinChange(coin);
         }
 
+        // Immediately fetch new historical data for the new coin
+        // This ensures we have data to display before redrawing the chart
+        fetchHistoricalData();
+
         // Force a chart redraw to ensure the coin indicator is visible if the function exists
         if (typeof drawChart === 'function') {
-            drawChart();
+            // Use setTimeout to ensure the chart redraws after all state changes are complete
+            // and after the historical data has been fetched
+            setTimeout(() => {
+                drawChart();
+            }, 50);
         }
 
         // Unsubscribe from old WebSocket channels
         if (window.bybitWsManager) {
-            // Unsubscribe from all kline channels
+            // Unsubscribe from all kline channels for all timeframes
             Object.values(window.coinManager.coins).forEach(c => {
-                const channel = `kline.5.${c.bybitSymbol}`;
-                window.bybitWsManager.unsubscribe(channel);
+                // Unsubscribe from all possible timeframes to be safe
+                const channels = [
+                    `kline.1.${c.bybitSymbol}`,
+                    `kline.5.${c.bybitSymbol}`,
+                    `kline.15.${c.bybitSymbol}`
+                ];
+                channels.forEach(channel => window.bybitWsManager.unsubscribe(channel));
             });
 
-            // Subscribe to new kline channel
-            const newKlineChannel = `kline.5.${coin.bybitSymbol}`;
+            // Subscribe to new kline channel with current timeframe
+            // Make sure we're using the latest timeframe value
+            const tf = window.currentTimeframe || currentTimeframe;
+            const newKlineChannel = `kline.${tf}.${coin.bybitSymbol}`;
             console.log(`Subscribing to new Bybit channel: ${newKlineChannel}`);
             window.bybitWsManager.subscribe(newKlineChannel, (data) => {
                 if (data.topic && data.data && data.data.length > 0) {
@@ -542,6 +596,8 @@
 
     // Helper function to process new bars (used by both WebSocket and coin change)
     const processNewBar = function(newBar) {
+        // Make this function globally accessible
+        window.processNewBar = processNewBar;
         // Find the index where this bar should be inserted or updated
         const existingBarIndex = bars.findIndex(b => b.time === newBar.time);
 
@@ -560,12 +616,14 @@
             bars.splice(insertIndex, 0, newBar);
         }
 
-        // Determine if this is the current interval bar
+        // Determine if this is the current interval bar based on the current timeframe
         const now = new Date();
         const intervalStart = new Date(now);
         const minutes = intervalStart.getMinutes();
-        const currentFiveMinInterval = Math.floor(minutes / 5) * 5;
-        intervalStart.setMinutes(currentFiveMinInterval);
+        // Make sure we're using the latest timeframe value
+        const tf = window.currentTimeframe || currentTimeframe;
+        const currentInterval = Math.floor(minutes / tf) * tf;
+        intervalStart.setMinutes(currentInterval);
         intervalStart.setSeconds(0);
         intervalStart.setMilliseconds(0);
 
@@ -994,14 +1052,22 @@
 
     // --- Data Fetching ---
     function fetchHistoricalData() {
+        // Make this function globally accessible
+        window.fetchHistoricalData = fetchHistoricalData;
         // Get current trading pair from coin manager
         if (window.coinManager) {
             currentPair = window.coinManager.getCurrentCoin().bybitSymbol;
         }
 
-        console.log(`Fetching historical data for ${currentPair}`);
+        // Make sure we're using the latest timeframe value
+        const tf = window.currentTimeframe || currentTimeframe;
+        console.log(`Fetching historical data for ${currentPair} with ${tf}m timeframe`);
 
-        fetch(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${currentPair}&interval=5&limit=750`)
+        // Get the current coin symbol for logging
+        const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+        console.log(`Fetching historical data for ${currentCoin} (${currentPair})`);
+
+        fetch(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${currentPair}&interval=${tf}&limit=750`)
             .then(response => response.json())
             .then(data => {
                 if (data.retCode === 0 && data.result && data.result.list) {
@@ -1028,17 +1094,21 @@
                                 return false;
                             }
 
-                            // Ensure the bar aligns with 5-minute intervals
+                            // Ensure the bar aligns with the current timeframe intervals
                             const barDate = new Date(bar.time);
                             const barMinutes = barDate.getMinutes();
-                            if (barMinutes % 5 !== 0) {
-                                console.log(`Filtering out bar not aligned with 5-minute intervals: ${barDate.toLocaleString()}`);
+                            // Make sure we're using the latest timeframe value
+                            const tf = window.currentTimeframe || currentTimeframe;
+                            if (barMinutes % tf !== 0) {
+                                console.log(`Filtering out bar not aligned with ${tf}-minute intervals: ${barDate.toLocaleString()}`);
                                 return false;
                             }
 
                             return true;
                         })
                         .reverse();
+
+                    console.log(`Received ${bars.length} valid bars for ${currentCoin}`);
 
                     // Initialize VWAP with historical bars
                     initializeVwapPeriod();
@@ -1049,17 +1119,27 @@
                         }
                     });
 
+                    // Set view to show the most recent bars
                     viewOffset = Math.max(0, bars.length - visibleBars);
+
+                    // Force price scale recalculation
                     isPriceScaleManuallySet = false;
+                    minPrice = 0;
+                    maxPrice = 100000; // Force recalculation based on visible bars
+
+                    // Update title with current price
                     updateTitle();
+
+                    // Draw chart with the new data
+                    console.log(`Drawing chart for ${currentCoin} with ${bars.length} bars`);
                     drawChart();
                 } else {
-                    console.error('Historical fetch failed:', data.retMsg || 'Unknown error');
+                    console.error(`Historical fetch failed for ${currentCoin}:`, data.retMsg || 'Unknown error');
                     drawChart();
                 }
             })
             .catch(error => {
-                console.error('Fetch error (Historical):', error);
+                console.error(`Fetch error (Historical) for ${currentCoin}:`, error);
                 drawChart();
             });
     }
@@ -1090,8 +1170,10 @@
             handleCoinChange(e.detail.coin);
         });
 
-        // Subscribe to the current pair's kline channel
-        const klineChannel = `kline.5.${currentPair}`;
+        // Subscribe to the current pair's kline channel with the current timeframe
+        // Make sure we're using the latest timeframe value
+        const tf = window.currentTimeframe || currentTimeframe;
+        const klineChannel = `kline.${tf}.${currentPair}`;
         console.log(`Subscribing to Bybit channel: ${klineChannel}`);
 
         bybitWsManager.subscribe(klineChannel, (data) => {
@@ -1178,14 +1260,21 @@
         // Check if mouse is over price scale area (right side of canvas)
         // This includes both the main chart price scale and the histogram price scale
         if (mouseX > canvas.width - priceScaleWidth) {
+            // Get current coin for logging
+            const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+
             // Price scale dragging (vertical only)
             isPriceScaleDragging = true;
             priceScaleDragStartY = e.clientY;
+
+            // Store current price range for dragging
             priceScaleDragStartMinPrice = minPrice;
             priceScaleDragStartMaxPrice = maxPrice;
+
+            // Change cursor to indicate vertical dragging
             canvas.style.cursor = 'ns-resize';
 
-            console.log('Price scale drag started:', {
+            console.log(`Price scale drag started for ${currentCoin}:`, {
                 startY: priceScaleDragStartY,
                 minPrice: priceScaleDragStartMinPrice,
                 maxPrice: priceScaleDragStartMaxPrice
@@ -1255,47 +1344,56 @@
         }
 
         if (isPriceScaleDragging) {
-            // Use the full chart height for better scaling
-            const chartHeight = canvas.height - timeScaleHeight;
+            // Get current coin for logging
+            const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
 
-            // TradingView price scale behavior - stretching/zooming
+            // Calculate drag distance
             const dragDistance = mouseY - priceScaleDragStartY;
+
+            // Skip if we don't have valid start values
+            if (!isFinite(priceScaleDragStartMinPrice) || !isFinite(priceScaleDragStartMaxPrice) ||
+                priceScaleDragStartMinPrice === priceScaleDragStartMaxPrice) {
+                console.log('Invalid price range, skipping drag');
+                return;
+            }
+
+            // Calculate price range
             const priceRange = priceScaleDragStartMaxPrice - priceScaleDragStartMinPrice;
 
-            // Debug price scale dragging
-            console.log('Price scale dragging:', {
-                dragDistance,
-                priceRange,
-                priceScaleDragStartY,
-                mouseY,
-                chartHeight
-            });
+            // Calculate stretch factor - use a very small sensitivity for more control
+            // Positive dragDistance (moving down) increases the range (stretches)
+            // Negative dragDistance (moving up) decreases the range (compresses)
+            const sensitivity = 0.002; // Very small value for fine control
+            const stretchFactor = Math.max(0.1, 1 + (dragDistance * sensitivity));
 
-            if (priceRange > 0 && isFinite(priceRange)) {
-                // Calculate stretch factor based on drag distance
-                // Dragging down stretches the chart (increases the range)
-                // Dragging up compresses the chart (decreases the range)
-                const stretchFactor = 1 + (dragDistance / (chartHeight * 0.5)); // Increased sensitivity
+            // Calculate new min and max prices by stretching around the center
+            const centerPrice = (priceScaleDragStartMaxPrice + priceScaleDragStartMinPrice) / 2;
+            let newMinPrice = centerPrice - (priceRange / 2) * stretchFactor;
+            let newMaxPrice = centerPrice + (priceRange / 2) * stretchFactor;
 
-                // Calculate new min and max prices by stretching around the center
-                const centerPrice = (priceScaleDragStartMaxPrice + priceScaleDragStartMinPrice) / 2;
-                let newMinPrice = centerPrice - (priceRange / 2) * stretchFactor;
-                let newMaxPrice = centerPrice + (priceRange / 2) * stretchFactor;
+            // Ensure minimum range to prevent excessive zoom
+            const minAllowedRange = priceRange * 0.1; // 10% of original range
+            if (newMaxPrice - newMinPrice < minAllowedRange) {
+                newMinPrice = centerPrice - minAllowedRange / 2;
+                newMaxPrice = centerPrice + minAllowedRange / 2;
+            }
 
-                // Ensure minimum range to prevent excessive zoom
-                const minAllowedRange = 10;
-                if (newMaxPrice - newMinPrice < minAllowedRange) {
-                    const midPrice = (newMinPrice + newMaxPrice) / 2;
-                    newMinPrice = midPrice - minAllowedRange / 2;
-                    newMaxPrice = midPrice + minAllowedRange / 2;
-                }
+            // Update price range if values are valid
+            if (isFinite(newMinPrice) && isFinite(newMaxPrice) && newMinPrice < newMaxPrice) {
+                minPrice = newMinPrice;
+                maxPrice = newMaxPrice;
+                isPriceScaleManuallySet = true;
 
-                if (isFinite(newMinPrice) && isFinite(newMaxPrice)) {
-                    minPrice = newMinPrice;
-                    maxPrice = newMaxPrice;
-                    isPriceScaleManuallySet = true;
-                    drawChart();
-                }
+                // Debug logging
+                console.log(`Price scale updated for ${currentCoin}:`, {
+                    dragDistance,
+                    stretchFactor,
+                    minPrice,
+                    maxPrice
+                });
+
+                // Redraw the chart with new price range
+                drawChart();
             }
         } else if (isChartDragging) {
             // Handle horizontal scrolling (left/right)
@@ -1358,6 +1456,11 @@
         mouseX = e.clientX - rect.left;
         mouseY = e.clientY - rect.top;
 
+        // Always reset hovered limit order and zoom lens by default
+        // This ensures the zoom lens disappears when not hovering over a limit
+        hoveredLimitOrder = null;
+        showZoomLens = false;
+
         // Calculate histogram area for resize handle detection
         const histogramAreaHeight = canvas.height - timeScaleHeight - histogramHeight - histogramPaneGap;
         const histogramY = histogramAreaHeight;
@@ -1374,11 +1477,6 @@
             canvas.style.cursor = 'ns-resize';
             return;
         }
-
-        // Reset hovered limit order and zoom lens by default
-        // This ensures the zoom lens disappears when not hovering over a limit
-        hoveredLimitOrder = null;
-        showZoomLens = false;
 
         // Calculate hovered price
         const chartHeight = canvas.height - timeScaleHeight - histogramHeight - histogramPaneGap;
@@ -1401,7 +1499,7 @@
                     // This ensures the zoom lens only appears when directly over a limit order's exact price
                     if (result && result.price && result.dollarValue >= 400000) {
                         // Extra check to ensure we're exactly at the order's price
-                        const exactPriceMatch = Math.abs(hoveredPrice - result.price) < 0.000001;
+                        const exactPriceMatch = Math.abs(hoveredPrice - result.price) < 0.0000001;
                         if (exactPriceMatch) {
                             hoveredLimitOrder = result;
                             showZoomLens = true; // Only enable zoom lens when directly over a valid limit order
@@ -1411,10 +1509,6 @@
                             hoveredLimitOrder = null;
                             showZoomLens = false;
                         }
-                    } else {
-                        // Explicitly reset these values when not over a limit order
-                        hoveredLimitOrder = null;
-                        showZoomLens = false;
                     }
                 }
             }
@@ -1454,14 +1548,20 @@
         if (!canvas) return;
         e.preventDefault();
 
+        // Get current coin for logging
+        const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+
         // Log the state before resetting
-        console.log('Mouse up - drag states:', {
+        console.log(`Mouse up for ${currentCoin} - drag states:`, {
             isDragging,
             isChartDragging,
             isPriceScaleDragging,
-            isHistogramResizing
+            isHistogramResizing,
+            minPrice,
+            maxPrice
         });
 
+        // Reset all drag states
         isDragging = false;
         isChartDragging = false;
         isPriceScaleDragging = false;
@@ -1475,20 +1575,25 @@
         // Reset cursor based on position
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
 
-        console.log('Mouse up at:', { x, y, canvasWidth: canvas.width, priceScaleWidth });
+        // Reset drag start values
+        dragStartX = 0;
+        priceScaleDragStartY = null;
+        priceScaleDragStartMinPrice = null;
+        priceScaleDragStartMaxPrice = null;
 
+        // Set cursor based on position
         if (x > canvas.width - priceScaleWidth) {
             canvas.style.cursor = 'ns-resize';
         } else {
             canvas.style.cursor = 'crosshair';
         }
-        dragStartX = 0;
-        priceScaleDragStartY = null;
-        priceScaleDragStartMinPrice = null;
-        priceScaleDragStartMaxPrice = null;
+
+        // Update hover state
         handleMouseHover(e);
+
+        // Force a redraw to ensure everything is updated
+        drawChart();
     }
 
     function handleWheel(e) {
@@ -1513,9 +1618,65 @@
                 const chartHeight = canvas.height - timeScaleHeight;
                 const priceRange = maxPrice - minPrice;
 
+                // Get current coin for logging
+                const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+
+                console.log(`Price scale wheel zoom for ${currentCoin}:`, {
+                    priceRange,
+                    minPrice,
+                    maxPrice,
+                    zoomFactor,
+                    deltaY: e.deltaY
+                });
+
+                // Ensure we have valid price range values
                 if (priceRange <= 0 || !isFinite(priceRange)) {
-                    console.log('Invalid price range, ignoring wheel event');
-                    return;
+                    console.log('Invalid price range, recalculating from visible bars');
+
+                    // If we don't have valid values, get them from the visible bars
+                    const startIndex = Math.max(0, Math.floor(viewOffset));
+                    const endIndex = Math.min(bars.length, startIndex + Math.ceil(visibleBars));
+                    const visibleBarsData = bars.slice(startIndex, endIndex);
+
+                    if (visibleBarsData.length > 0) {
+                        const lows = visibleBarsData.map(b => b.low).filter(p => !isNaN(p));
+                        const highs = visibleBarsData.map(b => b.high).filter(p => !isNaN(p));
+
+                        if (lows.length > 0 && highs.length > 0) {
+                            const localMinPrice = Math.min(...lows);
+                            const localMaxPrice = Math.max(...highs);
+                            const pricePadding = (localMaxPrice - localMinPrice) * 0.1;
+
+                            minPrice = localMinPrice - pricePadding;
+                            maxPrice = localMaxPrice + pricePadding;
+
+                            console.log('Price scale values recalculated for wheel zoom:', {
+                                minPrice,
+                                maxPrice
+                            });
+                        }
+                    }
+
+                    // If we still don't have valid values, use current price as fallback
+                    if (maxPrice <= minPrice || !isFinite(maxPrice) || !isFinite(minPrice)) {
+                        const currentPrice = bars.length > 0 ? bars[bars.length - 1].close : 0;
+                        if (currentPrice > 0) {
+                            minPrice = currentPrice * 0.95;
+                            maxPrice = currentPrice * 1.05;
+
+                            console.log('Price scale values set from current price for wheel zoom:', {
+                                minPrice,
+                                maxPrice,
+                                currentPrice
+                            });
+                        } else {
+                            // Last resort fallback
+                            minPrice = 0;
+                            maxPrice = 100;
+                            console.log('Using fallback price range for wheel zoom');
+                            return; // Skip this wheel event
+                        }
+                    }
                 }
 
                 // Calculate the price at mouse position
@@ -1538,6 +1699,11 @@
                     maxPrice = newMaxPrice;
                     isPriceScaleManuallySet = true;
                     drawChart();
+
+                    console.log(`Price scale zoomed for ${currentCoin}:`, {
+                        newMinPrice,
+                        newMaxPrice
+                    });
                 }
 
                 return;
@@ -1636,18 +1802,20 @@
     function findHoveredLimitOrder(mouseY) {
         // Immediate null checks
         if (!orderbook || !orderbook.bids || !orderbook.asks || !mouseY) {
+            console.log('Null check failed in findHoveredLimitOrder');
             return null;
         }
 
         // If orderbook is empty or has no significant orders, return null
         if (orderbook.bids.length === 0 && orderbook.asks.length === 0) {
+            console.log('No orders in orderbook');
             return null;
         }
 
         // Calculate mouse price
-        const chartHeight = canvas.height - timeScaleHeight;
+        const chartHeight = canvas.height - timeScaleHeight - histogramHeight - histogramPaneGap;
         const priceRange = Math.max(1e-6, maxPrice - minPrice);
-        const mousePrice = minPrice + (1 - mouseY / chartHeight) * priceRange;
+        const mousePrice = maxPrice - (mouseY / chartHeight) * priceRange;
 
         // Get minimum dollar value threshold for the current coin
         const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
@@ -1660,19 +1828,20 @@
 
         // If no significant orders, return null
         if (significantBids.length === 0 && significantAsks.length === 0) {
+            console.log('No significant orders found');
             return null;
         }
 
         // Define an extremely small hover threshold for exact detection
         // This ensures orders can only be hovered over exactly where they are
         // The zoom lens will only appear when directly over a limit order's exact price
-        const hoverThreshold = 0.000001; // Ultra-tiny epsilon for exact floating point comparison
+        const hoverThreshold = 0.0000001; // Ultra-tiny epsilon for exact floating point comparison
 
         // First check bids
         for (const [price, size, dollarValue] of significantBids) {
             // Only match if the price is EXACTLY equal (with the tiny epsilon)
             if (Math.abs(price - mousePrice) < hoverThreshold) {
-                console.log('EXACT match on BID at price', price);
+                console.log('EXACT match on BID at price', price, 'with difference', Math.abs(price - mousePrice));
                 return {
                     type: 'BID',
                     price: price,
@@ -1686,7 +1855,7 @@
         for (const [price, size, dollarValue] of significantAsks) {
             // Only match if the price is EXACTLY equal (with the tiny epsilon)
             if (Math.abs(price - mousePrice) < hoverThreshold) {
-                console.log('EXACT match on ASK at price', price);
+                console.log('EXACT match on ASK at price', price, 'with difference', Math.abs(price - mousePrice));
                 return {
                     type: 'ASK',
                     price: price,
@@ -1712,6 +1881,8 @@
 
     // Initialize the VWAP period start time (00:00 UTC+2 - daily open)
     function initializeVwapPeriod() {
+        // Make this function globally accessible
+        window.initializeVwapPeriod = initializeVwapPeriod;
         const now = new Date();
         const utcPlus2 = new Date(now.getTime() + 2 * 60 * 60 * 1000); // Convert to UTC+2
 
@@ -1893,29 +2064,33 @@
             }
         }
 
-        // Draw vertical line (extending to the bottom of the canvas)
+        // Draw crosshair lines with consistent styling
         ctx.strokeStyle = getColor('crosshair', 'rgba(150, 150, 150, 0.5)');
         ctx.lineWidth = 1;
         ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        ctx.moveTo(crosshairX, 0);
 
-        // Always extend vertical line to the bottom of the canvas (including time scale)
-        ctx.lineTo(crosshairX, canvas.height);
+        // Round coordinates to ensure pixel-perfect alignment
+        const roundedCrosshairX = Math.round(crosshairX) + 0.5; // Add 0.5 for crisp 1px lines
+        const roundedMouseY = Math.round(mouseY) + 0.5; // Add 0.5 for crisp 1px lines
+
+        // Draw vertical line (extending to the bottom of the canvas)
+        // Always use the snapped X position for the vertical line
+        ctx.beginPath();
+        ctx.moveTo(roundedCrosshairX, 0);
+        ctx.lineTo(roundedCrosshairX, canvas.height);
         ctx.stroke();
 
         // Draw horizontal line (only in the area where the mouse is)
-        // We still use the actual mouseY for the horizontal line since we want precise price hovering
-        // This is intentional - vertical line snaps to bars, horizontal line follows exact mouse position
+        // Use the exact mouse Y position for precise price hovering
         ctx.beginPath();
         if (mouseY < chartHeight) {
             // Mouse is in chart area
-            ctx.moveTo(0, mouseY);
-            ctx.lineTo(chartWidth, mouseY);
+            ctx.moveTo(0, roundedMouseY);
+            ctx.lineTo(chartWidth, roundedMouseY);
         } else {
             // Mouse is in histogram area
-            ctx.moveTo(0, mouseY);
-            ctx.lineTo(chartWidth, mouseY);
+            ctx.moveTo(0, roundedMouseY);
+            ctx.lineTo(chartWidth, roundedMouseY);
         }
         ctx.stroke();
         ctx.setLineDash([]);
@@ -1932,8 +2107,10 @@
             // Draw time tag background (TradingView style)
             const timeTagWidth = Math.max(60, textWidth + 16); // TradingView uses more compact tags
             const timeTagHeight = 18; // Slightly smaller height for TradingView style
-            // Use the snapped position for the time tag
-            const timeTagX = crosshairX - timeTagWidth / 2;
+
+            // Always use the rounded snapped position for the time tag to align with the vertical line
+            // Use the same rounded X coordinate as the vertical line for perfect alignment
+            const timeTagX = Math.round(roundedCrosshairX - timeTagWidth / 2);
             const timeTagY = timeScaleY - timeTagHeight - 1; // Position closer to time scale
 
             // Draw background with semi-transparent fill (TradingView style)
@@ -1950,19 +2127,22 @@
             ctx.fillStyle = isFutureBar ? 'rgba(200, 200, 200, 0.8)' : 'rgba(255, 255, 255, 0.9)';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(formattedTime, crosshairX, timeTagY + timeTagHeight / 2);
+            // Use the same rounded X coordinate as the vertical line for perfect alignment
+            ctx.fillText(formattedTime, roundedCrosshairX, timeTagY + timeTagHeight / 2);
         }
 
         // Draw price label to the left of the price scale
         if (hoveredPrice !== null) {
-            // ONLY show the zoom lens if the global flag is true (which is only set when hovering over a valid limit order)
-            if (showZoomLens && hoveredLimitOrder !== null) {
+            // ONLY show the zoom lens if the global flag is true AND we have a valid limit order
+            // This double-check ensures the zoom lens disappears when not hovering over a limit
+            if (showZoomLens === true && hoveredLimitOrder !== null && typeof hoveredLimitOrder === 'object') {
                 console.log('Drawing zoom lens for limit order:', hoveredLimitOrder.type, 'at price', hoveredLimitOrder.price);
                 // Draw a zoom lens for the limit order
                 const labelWidth = 180;
                 const labelHeight = 80;
                 const labelX = chartWidth - labelWidth - 5; // Position to the left of price scale with a small gap
-                const labelY = mouseY;
+                // Round to the nearest pixel to avoid blurry rendering and ensure alignment with the horizontal line
+                const labelY = Math.round(mouseY);
 
                 // Get color based on order type
                 const bidColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
@@ -2062,7 +2242,9 @@
                 const labelWidth = 150;
                 const labelHeight = 50;
                 const labelX = chartWidth - labelWidth - 5; // Position to the left of price scale with a small gap
-                const labelY = mouseY;
+                // Use exact mouseY for precise alignment with the horizontal line
+                // Round to the nearest pixel to avoid blurry rendering
+                const labelY = Math.round(mouseY);
 
                 // Draw background
                 ctx.fillStyle = 'rgba(31, 41, 55, 0.9)';
@@ -2352,7 +2534,18 @@
                 ctx.fillStyle = isBrightColor(tag.color) ? '#000000' : '#ffffff';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(tag.price.toFixed(2), priceTagX, tagY);
+
+                // Get current coin for price formatting
+                const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin() : { pricePrecision: 2 };
+
+                // Calculate price range for dynamic precision
+                const visiblePriceRange = maxPrice - minPrice;
+
+                // Get appropriate precision based on zoom level
+                const precision = getDynamicPricePrecision(currentCoin, visiblePriceRange);
+
+                // Format price with the correct precision
+                ctx.fillText(tag.price.toFixed(precision), priceTagX, tagY);
 
             } else if (tag.type === 'countdown') {
                 // Format countdown time
@@ -2396,7 +2589,18 @@
                 ctx.textAlign = 'center';
                 ctx.font = 'bold 10px Arial';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(tag.price.toFixed(2), priceTagX, tagY);
+
+                // Get current coin for price formatting
+                const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin() : { pricePrecision: 2 };
+
+                // Calculate price range for dynamic precision
+                const visiblePriceRange = maxPrice - minPrice;
+
+                // Get appropriate precision based on zoom level
+                const precision = getDynamicPricePrecision(currentCoin, visiblePriceRange);
+
+                // Format price with the correct precision
+                ctx.fillText(tag.price.toFixed(precision), priceTagX, tagY);
 
                 // No connecting line needed - the tag will extend through the separator
             }
@@ -2633,6 +2837,27 @@
             return (num / 1000).toFixed(1) + 'K';
         } else {
             return num.toFixed(0);
+        }
+    }
+
+    // Helper function to determine appropriate price precision based on zoom level
+    function getDynamicPricePrecision(coin, priceRange) {
+        // Only apply dynamic precision to XRP
+        if (coin.symbol !== 'XRP') {
+            return coin.pricePrecision || 2;
+        }
+
+        // For XRP, determine precision based on price range (zoom level)
+        if (priceRange >= 0.3) { // Very zoomed out
+            return 0; // Show whole numbers
+        } else if (priceRange >= 0.1) { // Moderately zoomed out
+            return 1; // Show 1 decimal
+        } else if (priceRange >= 0.03) { // Default zoom
+            return 2; // Show 2 decimals
+        } else if (priceRange >= 0.005) { // Zoomed in
+            return 3; // Show 3 decimals
+        } else { // Very zoomed in
+            return 4; // Show 4 decimals (maximum)
         }
     }
 
@@ -3033,37 +3258,46 @@
     }
 
     function updateBarCountdown() {
+        // Make this function globally accessible
+        window.updateBarCountdown = updateBarCountdown;
         // Get the current time
         const now = Date.now();
 
-        // Calculate the current 5-minute interval start time
-        // This ensures we're aligned with real clock 5-minute intervals (00:00, 00:05, 00:10, etc.)
+        // Calculate the current interval start time based on the current timeframe
+        // This ensures we're aligned with real clock intervals (00:00, 00:01, 00:05, 00:15, etc.)
         const currentDate = new Date(now);
         const minutes = currentDate.getMinutes();
         const seconds = currentDate.getSeconds();
         const ms = currentDate.getMilliseconds();
 
-        // Calculate the current 5-minute interval start time
-        const currentFiveMinInterval = Math.floor(minutes / 5) * 5;
+        // Calculate the current interval start time based on the timeframe
+        // Make sure we're using the latest timeframe value
+        const tf = window.currentTimeframe || currentTimeframe;
+        const currentInterval = Math.floor(minutes / tf) * tf;
         const intervalStart = new Date(currentDate);
-        intervalStart.setMinutes(currentFiveMinInterval);
+        intervalStart.setMinutes(currentInterval);
         intervalStart.setSeconds(0);
         intervalStart.setMilliseconds(0);
 
         // Update lastBarTime
         lastBarTime = intervalStart.getTime();
 
-        // Calculate minutes to the next 5-minute boundary
-        const minutesToNext = 5 - (minutes % 5);
-        // Calculate total milliseconds to the next 5-minute boundary
+        // Calculate minutes to the next interval boundary
+        // Make sure we're using the latest timeframe value
+        const minutesToNext = tf - (minutes % tf);
+        // Calculate total milliseconds to the next interval boundary
         const msToNext = (minutesToNext * 60 * 1000) - (seconds * 1000) - ms;
 
         // Calculate seconds remaining until next bar
         barCloseCountdown = Math.max(0, Math.floor(msToNext / 1000));
 
+        // Update the bar interval in milliseconds based on the current timeframe
+        barIntervalMs = tf * 60 * 1000;
+        window.barIntervalMs = barIntervalMs; // Update global variable
+
         // Log the countdown for debugging
         if (barCloseCountdown % 10 === 0) { // Log every 10 seconds to avoid console spam
-            console.log(`Next 5-min bar in: ${Math.floor(barCloseCountdown / 60)}:${(barCloseCountdown % 60).toString().padStart(2, '0')}`);
+            console.log(`Next ${tf}-min bar in: ${Math.floor(barCloseCountdown / 60)}:${(barCloseCountdown % 60).toString().padStart(2, '0')}`);
         }
     }
 
@@ -3352,8 +3586,17 @@
                         ctx.fillStyle = '#ffffff'; // Default white color
                     }
 
+                    // Get current coin for price formatting
+                    const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin() : { pricePrecision: 2 };
+
+                    // Calculate price range for dynamic precision
+                    const visiblePriceRange = maxPrice - minPrice;
+
+                    // Get appropriate precision based on zoom level
+                    const precision = getDynamicPricePrecision(currentCoin, visiblePriceRange);
+
                     // Move price labels 20px to the left from the right edge of the price scale
-                    ctx.fillText(price.toFixed(2), canvas.width - 20, y + 3);
+                    ctx.fillText(price.toFixed(precision), canvas.width - 20, y + 3);
                 }
             }
         }
@@ -4094,6 +4337,83 @@
         }
     }
 
+    // Initialize the timeframe selector
+    function initializeTimeframeSelector() {
+        console.log('Initializing timeframe selector...');
+        const timeframeButtons = document.querySelectorAll('.timeframe-button');
+
+        if (!timeframeButtons || timeframeButtons.length === 0) {
+            console.error('Timeframe selector buttons not found!');
+            return;
+        }
+
+        timeframeButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                // Get the timeframe from the button's data attribute
+                const newTimeframe = parseInt(button.getAttribute('data-timeframe'));
+
+                // Only proceed if the timeframe is different
+                if (newTimeframe !== currentTimeframe) {
+                    console.log(`Switching timeframe from ${currentTimeframe}m to ${newTimeframe}m`);
+
+                    // Update active button styling
+                    timeframeButtons.forEach(btn => btn.classList.remove('active'));
+                    button.classList.add('active');
+
+                    // Update the current timeframe
+                    currentTimeframe = newTimeframe;
+                    window.currentTimeframe = newTimeframe; // Update global variable
+
+                    // Update the bar interval
+                    barIntervalMs = currentTimeframe * 60 * 1000;
+                    window.barIntervalMs = barIntervalMs; // Update global variable
+
+                    // Unsubscribe from current kline channel
+                    if (window.bybitWsManager && window.coinManager) {
+                        const currentCoin = window.coinManager.getCurrentCoin();
+                        const oldChannels = [
+                            `kline.1.${currentCoin.bybitSymbol}`,
+                            `kline.5.${currentCoin.bybitSymbol}`,
+                            `kline.15.${currentCoin.bybitSymbol}`
+                        ];
+                        oldChannels.forEach(channel => window.bybitWsManager.unsubscribe(channel));
+
+                        // Subscribe to new kline channel
+                        const newKlineChannel = `kline.${currentTimeframe}.${currentCoin.bybitSymbol}`;
+                        console.log(`Subscribing to new Bybit channel: ${newKlineChannel}`);
+                        window.bybitWsManager.subscribe(newKlineChannel, (data) => {
+                            if (data.topic && data.data && data.data.length > 0) {
+                                const bar = data.data[0];
+                                const newBar = {
+                                    time: parseInt(bar.start),
+                                    open: parseFloat(bar.open),
+                                    high: parseFloat(bar.high),
+                                    low: parseFloat(bar.low),
+                                    close: parseFloat(bar.close)
+                                };
+
+                                // Process the new bar
+                                processNewBar(newBar);
+                            }
+                        });
+                    }
+
+                    // Reset chart data
+                    bars = [];
+
+                    // Reset VWAP
+                    initializeVwapPeriod();
+
+                    // Fetch new historical data
+                    fetchHistoricalData();
+
+                    // Update the countdown timer
+                    updateBarCountdown();
+                }
+            });
+        });
+    }
+
     // Initialize the threshold slider when the DOM is fully loaded
     document.addEventListener('DOMContentLoaded', () => {
         console.log('DOM loaded, initializing threshold slider...');
@@ -4104,14 +4424,23 @@
 
         // Also try to manually update the slider
         setTimeout(() => updateThresholdSliderForCurrentCoin(), 1500);
+
+        // Initialize the timeframe selector
+        setTimeout(() => initializeTimeframeSelector(), 100);
+        setTimeout(() => initializeTimeframeSelector(), 500);
+        setTimeout(() => initializeTimeframeSelector(), 1000);
     });
 
     // Also try to initialize on window load as a fallback
     window.addEventListener('load', () => {
-        console.log('Window loaded, initializing threshold slider...');
+        console.log('Window loaded, initializing UI components...');
         initializeThresholdSlider();
+        initializeTimeframeSelector();
         // Try again after a delay
-        setTimeout(() => initializeThresholdSlider(), 1000);
+        setTimeout(() => {
+            initializeThresholdSlider();
+            initializeTimeframeSelector();
+        }, 1000);
         // Also try to manually update the slider
         setTimeout(() => updateThresholdSliderForCurrentCoin(), 1500);
     });

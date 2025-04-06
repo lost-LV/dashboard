@@ -260,7 +260,7 @@ class ShortsLongsRatio {
         const selectorContainer = document.createElement('div');
         selectorContainer.className = 'coin-selector-container';
         selectorContainer.style.position = 'absolute';
-        selectorContainer.style.bottom = '30px'; // Position above version display
+        selectorContainer.style.bottom = '15px'; // Position above version display
         selectorContainer.style.left = '0';
         selectorContainer.style.width = '100%';
         selectorContainer.style.height = '50px'; // Increased from 45px for larger icons
@@ -279,7 +279,7 @@ class ShortsLongsRatio {
         buttonGroup.style.justifyContent = 'center'; // Center the buttons
         buttonGroup.style.width = '100%'; // Use full width
         buttonGroup.style.flexWrap = 'nowrap'; // Prevent wrapping
-        buttonGroup.style.gap = '2px'; // Reduced gap between buttons for better fit
+        buttonGroup.style.gap = '1px'; // Reduced gap between buttons for better fit
 
         // Get available coins
         const coins = Object.keys(window.coinManager.coins);
@@ -322,14 +322,14 @@ class ShortsLongsRatio {
             // Add title attribute for tooltip on hover
             button.title = coin.name;
 
-            button.style.flex = '0 0 auto';
-            button.style.margin = '0 1px'; // Reduced margin for better fit
+            button.style.flex = '10px 10px auto';
+            button.style.margin = '10px 1px'; // Reduced margin for better fit
             button.style.width = '28px'; // Adjusted size to ensure all buttons fit
             button.style.height = '28px'; // Adjusted size to ensure all buttons fit
             button.style.padding = '2px'; // Adjusted padding to ensure all buttons fit
             button.style.backgroundColor = this.currentCoin.symbol === coinSymbol ? '#333' : 'transparent';
-            button.style.border = `1px solid ${coin.color}`;
-            button.style.borderRadius = '4px';
+            button.style.border = `2px solid ${coin.color}`;
+            button.style.borderRadius = '8px';
 
             // Add hover effect
             button.addEventListener('mouseenter', () => {

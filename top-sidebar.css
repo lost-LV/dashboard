@@ -7,9 +7,9 @@
     background-color: rgba(19, 23, 34, 1); /* Full opacity */
     display: flex;
     align-items: center;
-    justify-content: center;
+    /* Removed justify-content to avoid conflict with timeframe-selector.css */
     z-index: 1; /* Very low z-index to ensure it's below the price scale */
-    padding: 0 20px;
+    /* Removed padding to avoid conflict with timeframe-selector.css */
     pointer-events: auto; /* Ensure it captures mouse events */
     box-sizing: border-box;
     border-right: none; /* Remove border to avoid any overlap issues */
@@ -19,9 +19,9 @@
 #threshold-slider-container {
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 100%;
-    max-width: 700px; /* Increased to accommodate longer button text */
+    justify-content: flex-end; /* Align to the right */
+    width: auto; /* Let it take the width it needs */
+    max-width: 600px; /* Slightly reduced to fit better on the right */
 }
 
 .threshold-label {
@@ -35,7 +35,7 @@
     display: flex;
     align-items: center;
     flex-grow: 1;
-    max-width: 500px;
+    max-width: 450px; /* Slightly reduced to fit better on the right */
 }
 
 .slider-container {
@@ -173,6 +173,8 @@
     text-align: center;
     padding: 0 5px;
     margin-right: 5px;
+    /* Hide spinner buttons */
+    -moz-appearance: textfield;
 }
 
 .unit {
@@ -203,14 +205,26 @@
     border-color: #2196F3;
 }
 
+/* Hide spinner buttons in Webkit browsers (Chrome, Safari, Edge) */
+#threshold-input::-webkit-outer-spin-button,
+#threshold-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
 /* Container is now positioned in styles.css */
 
 /* Adjust top sidebar when main sidebar is visible */
 .sidebar-visible #top-sidebar {
-    width: 100%; /* Keep full width */
-    left: 160px; /* Align with sidebar width */
-    z-index: 1; /* Very low z-index to ensure it's below the price scale */
-    padding-right: 180px; /* Add padding to account for sidebar and price scale */
+    width: calc(100% - 160px) !important; /* Adjust width to account for sidebar */
+    left: 160px !important; /* Align with sidebar width */
+    z-index: 1 !important; /* Very low z-index to ensure it's below the price scale */
+    padding-right: 110px !important; /* Add padding to account for price scale */
+}
+
+/* Adjust threshold slider container position when sidebar is visible */
+.sidebar-visible #threshold-slider-container {
+    right: 150px !important; /* Keep the same position from the right edge */
 }
 
 /* Vertical separator line between price scale and top bar */

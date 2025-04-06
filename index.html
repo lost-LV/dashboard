@@ -8,14 +8,14 @@
     <link rel="stylesheet" href="sidebar.css">
     <link rel="stylesheet" href="top-sidebar.css">
     <link rel="stylesheet" href="connection-meter.css">
-    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <link rel="stylesheet" href="timeframe-selector.css">
     <style>
         /* Top right corner background fix */
         #top-right-background-fix {
             position: fixed;
             top: 0;
             right: 0;
-            width: 100px; /* Increased from 70px to accommodate buttons */
+            width: 70px; /* Width to match the reset zoom button */
             height: 40px; /* Match top sidebar height */
             background-color: #131722; /* Match chart background */
             z-index: 99; /* Below other elements */
@@ -28,18 +28,19 @@
         /* Top right buttons container */
         #top-right-buttons {
             position: fixed;
-            top: 6px; /* Adjusted to center vertically in the top bar */
-            right: 2px; /* Adjusted for better positioning */
+            top: 0; /* Align with top of the screen */
+            right: 0; /* Align with right of the screen */
+            width: 70px; /* Match width of the reset zoom button */
+            height: 40px; /* Match height of the top bar */
             display: flex;
-            gap: 15px; /* Increased for better spacing between buttons */
             z-index: 101; /* Above the corner fix */
         }
 
         /* Button styling */
         #top-right-buttons button {
-            width: 28px; /* Increased from 24px */
-            height: 28px; /* Increased from 24px */
-            border-radius: 4px; /* Increased from 3px */
+            width: 100%; /* Fill the container */
+            height: 100%; /* Fill the container */
+            border-radius: 0; /* No rounded corners */
             background-color: rgba(40, 40, 40, 0.8);
             border: 1px solid rgba(255, 255, 255, 0.15);
             color: white;
@@ -51,11 +52,6 @@
             padding: 0;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); /* Added shadow for better visibility */
             box-sizing: border-box; /* Ensure consistent sizing */
-        }
-
-        /* Specific styling for screenshot button to ensure it's aligned */
-        #screenshot-button {
-            margin-right: -8px; /* Slight adjustment to align with fullscreen button */
         }
 
         #top-right-buttons button:hover {
@@ -79,12 +75,6 @@
 
     <!-- Top right buttons container -->
     <div id="top-right-buttons">
-        <button id="screenshot-button" title="Take Screenshot">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-                <circle cx="12" cy="13" r="4"></circle>
-            </svg>
-        </button>
         <button id="fullscreen-button" title="Toggle Fullscreen">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
@@ -107,6 +97,14 @@
                     <span id="recommended-value">(Recommended: 400k)</span>
                     <button id="set-recommended" title="Set to recommended value">Use recommended</button>
                 </div>
+            </div>
+        </div>
+        <div class="timeframe-selector-container">
+            <div class="timeframe-selector-label">Timeframe:</div>
+            <div class="timeframe-button-group">
+                <button class="timeframe-button" data-timeframe="1">1m</button>
+                <button class="timeframe-button active" data-timeframe="5">5m</button>
+                <button class="timeframe-button" data-timeframe="15">15m</button>
             </div>
         </div>
     </div>
@@ -196,6 +194,7 @@
     <script src="coin-indicator.js"></script>
     <script src="connection-meter.js"></script>
     <script src="test-updater.js"></script>
-    <script src="screenshot.js"></script>
+    <script src="timeframe-selector-direct.js"></script>
+    <script src="fullscreen.js"></script>
 </body>
 </html>

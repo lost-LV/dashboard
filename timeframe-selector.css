@@ -1,0 +1,68 @@
+.timeframe-selector-container {
+    display: flex;
+    align-items: center;
+    margin-left: 10px;
+    height: 24px;
+}
+
+.timeframe-selector-label {
+    color: #aaa;
+    font-size: 12px;
+    margin-right: 8px;
+    white-space: nowrap;
+}
+
+.timeframe-button-group {
+    display: flex;
+    height: 24px;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #3a3f4c;
+}
+
+.timeframe-button {
+    background-color: #2a2e39;
+    color: #aaa;
+    border: none;
+    padding: 0 10px;
+    font-size: 12px;
+    cursor: pointer;
+    height: 100%;
+    transition: all 0.2s ease;
+}
+
+.timeframe-button:not(:last-child) {
+    border-right: 1px solid #3a3f4c;
+}
+
+.timeframe-button:hover {
+    background-color: #333942;
+}
+
+.timeframe-button.active {
+    background-color: #2196F3;
+    color: white;
+}
+
+/* Position the timeframe selector to the left and threshold slider to the right */
+#top-sidebar {
+    justify-content: space-between !important; /* Force space between to push elements apart */
+    padding-left: 10px !important;
+    padding-right: 110px !important; /* Add padding to the right to avoid overlap with the price scale */
+}
+
+.timeframe-selector-container {
+    order: 1 !important; /* Place it first in the flex container */
+    margin-right: 0 !important; /* Don't push all the way to the left */
+    flex: 0 0 auto !important; /* Don't grow or shrink */
+}
+
+#threshold-slider-container {
+    order: 2 !important; /* Place it after the timeframe selector */
+    margin-left: auto !important; /* Push it to the right */
+    margin-right: 0 !important; /* Don't add extra margin on the right */
+    justify-content: flex-end !important; /* Align contents to the right */
+    flex: 0 1 auto !important; /* Allow shrinking but not growing */
+    position: absolute !important; /* Position absolutely */
+    right: 150px !important; /* Position from the right edge - moved more to the left */
+}

@@ -44,7 +44,34 @@ function drawCurrentPriceAndCountdown() {
     ctx.font = 'bold 12px Arial';
     ctx.fillStyle = isBrightColor(priceColor) ? '#000000' : '#ffffff';
     ctx.textAlign = 'center';
-    ctx.fillText(currentPrice.toFixed(2), priceTagX, adjustedPriceTagY + 14);
+
+    // Get current coin for price formatting
+    const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin() : { pricePrecision: 2 };
+
+    // Calculate price range for dynamic precision
+    const visiblePriceRange = maxPrice - minPrice;
+
+    // Get appropriate precision based on zoom level
+    // For XRP, determine precision based on zoom level
+    let precision = currentCoin.pricePrecision || 2;
+
+    // Only apply dynamic precision to XRP
+    if (currentCoin.symbol === 'XRP') {
+        if (visiblePriceRange >= 0.3) { // Very zoomed out
+            precision = 0; // Show whole numbers
+        } else if (visiblePriceRange >= 0.1) { // Moderately zoomed out
+            precision = 1; // Show 1 decimal
+        } else if (visiblePriceRange >= 0.03) { // Default zoom
+            precision = 2; // Show 2 decimals
+        } else if (visiblePriceRange >= 0.005) { // Zoomed in
+            precision = 3; // Show 3 decimals
+        } else { // Very zoomed in
+            precision = 4; // Show 4 decimals (maximum)
+        }
+    }
+
+    // Format price with the correct precision
+    ctx.fillText(currentPrice.toFixed(precision), priceTagX, adjustedPriceTagY + 14);
 
     // Draw countdown timer at the bottom of the chart
     const countdownTagWidth = 80;
