@@ -122,8 +122,8 @@
                 // Update minimum liquidation size based on coin
                 config.minIndividualLiquidationSize = coin.minLiquidationSize || 0.5;
 
-                // Update value scale factor for marker sizing
-                config.valueScaleFactor = coin.valueScaleFactor || 1;
+                // Set value scale factor to 1 to ensure accurate display of liquidation values
+                config.valueScaleFactor = 1; // Always use 1 to avoid scaling issues
 
                 console.log(`Updated liquidation config for ${coin.symbol}: min size=${config.minIndividualLiquidationSize}, scale factor=${config.valueScaleFactor}`);
             }
@@ -258,11 +258,11 @@
             const minSize = config.minIndividualLiquidationSize;
             const scaleFactor = config.valueScaleFactor;
 
-            // Size for liquidations, scaled based on the coin's value - increased to ensure visibility
-            let baseSize = (Math.random() * 5 + 3) / scaleFactor; // Increased from (Math.random() * 2 + 1.5)
+            // Size for liquidations, scaled based on the coin's value
+            let baseSize = (Math.random() * 2 + 1.5) / scaleFactor; // Original values
 
             // Adjust size based on side (sells tend to be larger)
-            const size = isSell ? baseSize * 1.5 : baseSize * 1.2; // Increased multipliers
+            const size = isSell ? baseSize * 1.2 : baseSize; // Original values
 
             // Price is slightly beyond the current price (that's why it liquidated)
             const priceOffset = isSell ? -50 - Math.random() * 100 : 50 + Math.random() * 100;
@@ -479,8 +479,8 @@
                     // For values at minDollarValue (50k), use minMarkerSize
                     // For values at or above maxDollarValue (1M), use maxMarkerSize
                     // For values in between, scale logarithmically for better visual representation
-                    // Apply value scale factor to account for different coin values
-                    const scaledSellDollars = totalSellDollars * config.valueScaleFactor;
+                    // No scaling factor applied to ensure accurate display
+                    const scaledSellDollars = totalSellDollars; // No scaling factor
                     const sellSizeFactor = scaledSellDollars >= config.minDollarValue ?
                         Math.min(
                             config.maxMarkerSize - config.minMarkerSize,
@@ -542,8 +542,8 @@
                     // For values at minDollarValue (50k), use minMarkerSize
                     // For values at or above maxDollarValue (1M), use maxMarkerSize
                     // For values in between, scale logarithmically for better visual representation
-                    // Apply value scale factor to account for different coin values
-                    const scaledBuyDollars = totalBuyDollars * config.valueScaleFactor;
+                    // No scaling factor applied to ensure accurate display
+                    const scaledBuyDollars = totalBuyDollars; // No scaling factor
                     const buySizeFactor = scaledBuyDollars >= config.minDollarValue ?
                         Math.min(
                             config.maxMarkerSize - config.minMarkerSize,

@@ -25,6 +25,14 @@ class ShortsLongsRatio {
             asks: []  // Shorts
         };
 
+        // Smoothing data for imbalance values
+        this.smoothingData = {
+            imbalanceValue: null,
+            imbalanceUSD: null,
+            imbalanceVolume: null,
+            lastUpdateTime: 0
+        };
+
         // Current coin symbol
         this.currentCoin = window.coinManager ? window.coinManager.getCurrentCoin() : { symbol: 'BTC', bitstampSymbol: 'btcusd' };
 
@@ -69,12 +77,24 @@ class ShortsLongsRatio {
         checkAndSubscribe();
     }
 
+    // Throttle function to limit how often a function can be called
+    throttle(func, limit) {
+        let inThrottle;
+        return function() {
+            const args = arguments;
+            const context = this;
+            if (!inThrottle) {
+                func.apply(context, args);
+                inThrottle = true;
+                setTimeout(() => inThrottle = false, limit);
+            }
+        };
+    }
+
     handleOrderbookUpdate(data) {
         if (data.event === 'data' && data.data && data.data.bids && data.data.asks) {
             try {
-                // Get current price for USD calculations
-                const priceVarName = `${this.currentCoin.symbol.toLowerCase()}Price`;
-                const currentPrice = window[priceVarName] || 0;
+                // We don't need the current price here as the price is already in USD in the orderbook data
 
                 // Clear existing data
                 this.data.bids = [];
@@ -102,12 +122,29 @@ class ShortsLongsRatio {
                     this.data.asks.push([price, size, price * size]); // Include USD value
                 }
 
-                // Update the sidebar
-                this.updateSidebar();
+                // Update the sidebar with throttling for XRP and SOL
+                if (this.currentCoin.symbol === 'XRP' || this.currentCoin.symbol === 'SOL') {
+                    // Use a longer throttle time for XRP and SOL to reduce twitching
+                    const now = Date.now();
+                    // Only update every 500ms for XRP and SOL
+                    if (now - this.smoothingData.lastUpdateTime > 500) {
+                        this.updateSidebar();
+                        this.smoothingData.lastUpdateTime = now;
+                    }
+                } else {
+                    // For other coins, update normally
+                    this.updateSidebar();
+                }
             } catch (error) {
                 console.error('Error processing orderbook data in sidebar:', error);
             }
         }
+    }
+
+    // Apply smoothing to a value
+    smoothValue(newValue, oldValue, smoothingFactor = 0.3) {
+        if (oldValue === null) return newValue;
+        return oldValue + smoothingFactor * (newValue - oldValue);
     }
 
     updateSidebar() {
@@ -132,11 +169,29 @@ class ShortsLongsRatio {
         const longsGreaterThanShorts = totalBidVolume > totalAskVolume;
 
         // Calculate imbalance (difference between longs and shorts)
-        const imbalanceValue = longsPercentage - shortsPercentage;
+        let imbalanceValue = longsPercentage - shortsPercentage;
 
         // Calculate imbalance in USD and coin volume
-        const imbalanceUSD = totalBidUSD - totalAskUSD;
-        const imbalanceVolume = totalBidVolume - totalAskVolume;
+        let imbalanceUSD = totalBidUSD - totalAskUSD;
+        let imbalanceVolume = totalBidVolume - totalAskVolume;
+
+        // Apply smoothing for XRP and SOL to reduce twitching
+        if (coinSymbol === 'XRP' || coinSymbol === 'SOL') {
+            // Apply smoothing to imbalance values
+            imbalanceValue = this.smoothValue(imbalanceValue, this.smoothingData.imbalanceValue);
+            imbalanceUSD = this.smoothValue(imbalanceUSD, this.smoothingData.imbalanceUSD);
+            imbalanceVolume = this.smoothValue(imbalanceVolume, this.smoothingData.imbalanceVolume);
+
+            // Store the smoothed values for next update
+            this.smoothingData.imbalanceValue = imbalanceValue;
+            this.smoothingData.imbalanceUSD = imbalanceUSD;
+            this.smoothingData.imbalanceVolume = imbalanceVolume;
+        } else {
+            // For other coins, reset smoothing data
+            this.smoothingData.imbalanceValue = null;
+            this.smoothingData.imbalanceUSD = null;
+            this.smoothingData.imbalanceVolume = null;
+        }
 
         // Update DOM elements
         this.longsBar.style.width = `${longsPercentage}%`;
@@ -434,6 +489,14 @@ class ShortsLongsRatio {
             this.data = {
                 bids: [],
                 asks: []
+            };
+
+            // Reset smoothing data when changing coins
+            this.smoothingData = {
+                imbalanceValue: null,
+                imbalanceUSD: null,
+                imbalanceVolume: null,
+                lastUpdateTime: 0
             };
 
             // Force an immediate update of the sidebar
