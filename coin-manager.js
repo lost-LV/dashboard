@@ -95,28 +95,23 @@ class CoinManager {
             // Save preference
             this.saveCoinPreference();
 
-            // Create a new event each time to ensure it's properly dispatched
-            const coinChangeEvent = new CustomEvent('coinChanged', {
-                detail: {
-                    coin: this.getCurrentCoin(),
-                    previousCoin: this.coins[previousCoin]
-                }
-            });
+            // RADICAL SOLUTION: Force a complete page reload when switching coins
+            // This ensures all data is completely reset and reloaded
+            console.log(`Forcing page reload for coin change to ${symbol}`);
 
-            // Dispatch event to notify other components
-            document.dispatchEvent(coinChangeEvent);
+            // Show loading overlay
+            this.showLoadingOverlay(symbol);
 
-            // Log the coin change
-            console.log(`Coin changed to ${symbol}. Event dispatched.`);
+            // Add a query parameter to the URL to indicate we're reloading after a coin change
+            const url = new URL(window.location.href);
+            url.searchParams.set('coin', symbol);
+            url.searchParams.set('reload', Date.now()); // Add timestamp to prevent caching
 
-            // Update page title
-            this.updateTitle();
-
-            // Update the threshold slider if the function exists
-            if (window.updateThresholdSlider) {
-                console.log('Calling updateThresholdSlider from coin-manager');
-                setTimeout(() => window.updateThresholdSlider(), 100);
-            }
+            // Short delay to allow the loading overlay to appear
+            setTimeout(() => {
+                // Reload the page with the new URL
+                window.location.href = url.toString();
+            }, 100);
 
             return true;
         }
@@ -133,9 +128,27 @@ class CoinManager {
         }
     }
 
-    // Load saved coin preference from localStorage
+    // Load saved coin preference from localStorage or URL parameters
     loadSavedCoin() {
         try {
+            // Check URL parameters first (highest priority)
+            const urlParams = new URLSearchParams(window.location.search);
+            const coinParam = urlParams.get('coin');
+
+            if (coinParam && this.coins[coinParam]) {
+                this.currentCoin = coinParam;
+                console.log(`Loaded coin from URL parameter: ${coinParam}`);
+                // Clean up URL after loading to avoid issues with refreshing
+                if (window.history && window.history.replaceState) {
+                    const cleanUrl = new URL(window.location.href);
+                    cleanUrl.searchParams.delete('coin');
+                    cleanUrl.searchParams.delete('reload');
+                    window.history.replaceState({}, document.title, cleanUrl.toString());
+                }
+                return;
+            }
+
+            // Fall back to localStorage if no URL parameter
             const savedCoin = localStorage.getItem('selectedCoin');
             if (savedCoin && this.coins[savedCoin]) {
                 this.currentCoin = savedCoin;
@@ -150,7 +163,7 @@ class CoinManager {
     updateTitle() {
         const coin = this.getCurrentCoin();
         const price = window[`${coin.symbol.toLowerCase()}Price`] || 'Loading...';
-        document.title = `${coin.symbol}/USDT: ${price}`;
+        document.title = `${price}`;
     }
 
     // Format price according to coin's precision
@@ -179,7 +192,67 @@ class CoinManager {
     getValueScaleFactor() {
         return this.getCurrentCoin().valueScaleFactor;
     }
+
+    // Show loading overlay when switching coins
+    showLoadingOverlay(symbol) {
+        // Create loading overlay if it doesn't exist
+        let overlay = document.getElementById('coin-loading-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'coin-loading-overlay';
+            overlay.style.position = 'fixed';
+            overlay.style.top = '0';
+            overlay.style.left = '0';
+            overlay.style.width = '100%';
+            overlay.style.height = '100%';
+            overlay.style.backgroundColor = 'rgba(19, 23, 34, 0.9)';
+            overlay.style.zIndex = '9999';
+            overlay.style.display = 'flex';
+            overlay.style.flexDirection = 'column';
+            overlay.style.justifyContent = 'center';
+            overlay.style.alignItems = 'center';
+            overlay.style.color = 'white';
+            overlay.style.fontFamily = 'Arial, sans-serif';
+            document.body.appendChild(overlay);
+        } else {
+            overlay.style.display = 'flex';
+        }
+
+        // Get coin color
+        const coinColor = this.coins[symbol].color;
+
+        // Set content
+        overlay.innerHTML = `
+            <div style="font-size: 24px; margin-bottom: 20px; color: ${coinColor};">Switching to ${this.coins[symbol].name}</div>
+            <div class="loading-spinner" style="border: 5px solid #f3f3f3; border-top: 5px solid ${coinColor}; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite;"></div>
+        `;
+
+        // Add animation style
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        `;
+        document.head.appendChild(style);
+    }
 }
 
 // Create global instance
 window.coinManager = new CoinManager();
+
+// Hide loading overlay when page is fully loaded
+window.addEventListener('load', () => {
+    const overlay = document.getElementById('coin-loading-overlay');
+    if (overlay) {
+        // Fade out and remove
+        overlay.style.transition = 'opacity 0.5s';
+        overlay.style.opacity = '0';
+        setTimeout(() => {
+            if (overlay.parentNode) {
+                overlay.parentNode.removeChild(overlay);
+            }
+        }, 500);
+    }
+});

@@ -151,6 +151,8 @@ class ShortsLongsRatio {
         // Get current coin symbol
         const coinSymbol = this.currentCoin.symbol;
 
+        console.log(`Updating sidebar for ${coinSymbol} with ${this.data.bids.length} bids and ${this.data.asks.length} asks`);
+
         // Calculate total volume for bids (longs) and asks (shorts)
         const totalBidVolume = this.data.bids.reduce((sum, [, volume]) => sum + volume, 0);
         const totalAskVolume = this.data.asks.reduce((sum, [, volume]) => sum + volume, 0);
@@ -160,6 +162,13 @@ class ShortsLongsRatio {
         const totalBidUSD = this.data.bids.reduce((sum, [, , usdValue]) => sum + (usdValue || 0), 0);
         const totalAskUSD = this.data.asks.reduce((sum, [, , usdValue]) => sum + (usdValue || 0), 0);
         const totalUSD = totalBidUSD + totalAskUSD;
+
+        // Check if we have valid data
+        if (this.data.bids.length === 0 && this.data.asks.length === 0) {
+            console.log('No orderbook data available yet, showing placeholder values');
+            // Don't update the UI with zeros, keep the previous values
+            return;
+        }
 
         // Calculate ratio as a percentage (longs as % of total)
         const longsPercentage = totalVolume > 0 ? (totalBidVolume / totalVolume) * 100 : 50;
@@ -424,6 +433,35 @@ class ShortsLongsRatio {
         // Update current coin reference
         this.currentCoin = coin;
 
+        // Force a sidebar update with a delay to ensure WebSocket data has arrived
+        setTimeout(() => {
+            // Check if we have data
+            if (this.data.bids.length === 0 && this.data.asks.length === 0) {
+                console.log('No orderbook data yet after coin change, requesting data...');
+
+                // Try to request orderbook data again
+                if (window.bitstampWsManager) {
+                    const channel = `order_book_${coin.bitstampSymbol}`;
+                    console.log(`Re-subscribing to Bitstamp channel from sidebar: ${channel}`);
+                    window.bitstampWsManager.unsubscribe(channel);
+                    window.bitstampWsManager.subscribe(channel, this.handleOrderbookUpdate.bind(this));
+                }
+
+                // Try again after another delay
+                setTimeout(() => {
+                    if (this.data.bids.length > 0 || this.data.asks.length > 0) {
+                        console.log('Orderbook data now available, updating sidebar');
+                        this.updateSidebar();
+                    } else {
+                        console.warn('Still no orderbook data available after retry');
+                    }
+                }, 2000);
+            } else {
+                console.log('Orderbook data available, updating sidebar');
+                this.updateSidebar();
+            }
+        }, 1000);
+
         // Update coin selector buttons
         if (this.coinSelectorContainer) {
             const buttons = this.coinSelectorContainer.querySelectorAll('button');
@@ -520,16 +558,44 @@ class ShortsLongsRatio {
             const versionContainer = document.createElement('div');
             versionContainer.className = 'version-container';
             versionContainer.id = 'version-display'; // Add ID for easier reference
+            versionContainer.style.display = 'flex'; // Use flexbox for layout
+            versionContainer.style.alignItems = 'center'; // Center items vertically
+            versionContainer.style.justifyContent = 'center'; // Center items horizontally
 
             // Create version text with enhanced styling
             const versionText = document.createElement('div');
-            versionText.textContent = `v${window.appVersion.version}`;
+            versionText.textContent = `${window.appVersion.version}`; // Removed 'v' prefix
             versionText.style.fontFamily = 'Arial, sans-serif';
             versionText.style.fontWeight = 'bold';
             versionText.style.letterSpacing = '0.5px';
+            versionText.style.marginRight = '-4px'; // Move version text slightly to the left
 
-            // Add version text to container
+            // Create separator
+            const separator = document.createElement('div');
+            separator.style.margin = '0 8px';
+            separator.style.opacity = '0.5';
+            separator.style.paddingLeft = '4px'; // Add padding to offset the version text margin
+            separator.textContent = '|';
+
+            // Create made by text
+            const madeByText = document.createElement('div');
+            madeByText.id = 'made-by-text-version';
+            // Use plain text instead of HTML to ensure proper spacing
+            const madeBySpan = document.createElement('span');
+            madeBySpan.textContent = 'made by\u00A0'; // Using non-breaking space to ensure proper spacing
+            madeBySpan.style.opacity = '0.7';
+
+            const lostSpan = document.createElement('span');
+            lostSpan.textContent = 'lost';
+            lostSpan.style.fontWeight = '600';
+
+            madeByText.appendChild(madeBySpan);
+            madeByText.appendChild(lostSpan);
+
+            // Add version text, separator, and made by text to container
             versionContainer.appendChild(versionText);
+            versionContainer.appendChild(separator);
+            versionContainer.appendChild(madeByText);
 
             // Add container to sidebar
             this.sidebar.appendChild(versionContainer);

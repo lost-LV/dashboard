@@ -40,13 +40,11 @@
 }
 
 .timeframe-button.active {
-    background-color: #2196F3;
-    color: white;
+    /* Let JavaScript handle the active state styling */
 }
 
 /* Position the timeframe selector to the left and threshold slider to the right */
 #top-sidebar {
-    justify-content: space-between !important; /* Force space between to push elements apart */
     padding-left: 10px !important;
     padding-right: 110px !important; /* Add padding to the right to avoid overlap with the price scale */
 }
@@ -57,12 +55,24 @@
     flex: 0 0 auto !important; /* Don't grow or shrink */
 }
 
-#threshold-slider-container {
+/* Ensure the line drawing button container is positioned correctly */
+.line-drawing-button-container {
     order: 2 !important; /* Place it after the timeframe selector */
+}
+
+/* Ensure the volume profile button container is positioned correctly */
+.volume-profile-button-container {
+    order: 3 !important; /* Place it after the line drawing button */
+}
+
+#threshold-slider-container {
+    order: 10 !important; /* Place it after all other buttons with a high number */
     margin-left: auto !important; /* Push it to the right */
-    margin-right: 0 !important; /* Don't add extra margin on the right */
+    margin-right: 110px !important; /* Add margin on the right to position it correctly */
     justify-content: flex-end !important; /* Align contents to the right */
     flex: 0 1 auto !important; /* Allow shrinking but not growing */
-    position: absolute !important; /* Position absolutely */
-    right: 150px !important; /* Position from the right edge - moved more to the left */
+    position: relative !important; /* Use relative positioning */
+    z-index: 30 !important; /* Ensure it's above other elements */
+    padding-top: 0 !important; /* Reset padding */
+    padding-bottom: 0 !important; /* Reset padding */
 }

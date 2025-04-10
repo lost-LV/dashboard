@@ -8,12 +8,15 @@
     display: flex;
     align-items: center;
     /* Removed justify-content to avoid conflict with timeframe-selector.css */
-    z-index: 1; /* Very low z-index to ensure it's below the price scale */
+    z-index: 10; /* Increased z-index to ensure it's above other elements */
     /* Removed padding to avoid conflict with timeframe-selector.css */
     pointer-events: auto; /* Ensure it captures mouse events */
     box-sizing: border-box;
     border-right: none; /* Remove border to avoid any overlap issues */
     box-shadow: 0 1px 0 0 rgba(150, 150, 150, 0.4); /* Use box-shadow for exact alignment with right side */
+    padding-left: 10px;
+    padding-right: 110px;
+    justify-content: space-between; /* Distribute space between elements */
 }
 
 #threshold-slider-container {
@@ -22,6 +25,9 @@
     justify-content: flex-end; /* Align to the right */
     width: auto; /* Let it take the width it needs */
     max-width: 600px; /* Slightly reduced to fit better on the right */
+    z-index: 10; /* Ensure it's above other elements */
+    pointer-events: auto; /* Ensure it captures mouse events */
+    position: relative; /* Needed for absolute positioning of children */
 }
 
 .threshold-label {
@@ -35,7 +41,14 @@
     display: flex;
     align-items: center;
     flex-grow: 1;
-    max-width: 450px; /* Slightly reduced to fit better on the right */
+    width: 250px; /* Fixed width */
+    min-width: 250px; /* Ensure minimum width */
+    max-width: 250px; /* Ensure maximum width */
+    pointer-events: auto; /* Ensure it captures mouse events */
+    z-index: 12; /* Ensure it's above other elements */
+    padding-top: 10px; /* Add padding to accommodate labels */
+    padding-bottom: 10px; /* Add padding for better spacing */
+    position: relative; /* Needed for absolute positioning of labels */
 }
 
 .slider-container {
@@ -43,6 +56,12 @@
     align-items: center;
     flex-grow: 1;
     position: relative;
+    pointer-events: auto; /* Ensure it captures mouse events */
+    z-index: 15; /* Ensure it's above other elements */
+    width: 150px; /* Set a fixed width */
+    min-width: 150px; /* Ensure minimum width */
+    margin-top: 20px; /* Add margin to accommodate labels */
+    margin-bottom: 10px; /* Add margin for better spacing */
 }
 
 .slider-delimiter, .slider-recommended {
@@ -68,7 +87,7 @@
 }
 
 #recommended-value {
-    color: #2196F3;
+    color: var(--bullish-candle-color, #26a69a);
     font-size: 11px;
     margin-right: 10px;
     white-space: nowrap;
@@ -86,13 +105,20 @@
     position: relative;
     cursor: pointer;
     overflow: visible;
+    pointer-events: auto; /* Ensure slider captures mouse events */
+    z-index: 20; /* Ensure slider is above other elements */
+}
+
+/* Define slider track color variable */
+:root {
+    --slider-track-color: var(--bullish-candle-color, #26a69a);
 }
 
 /* Add a progress bar to the slider */
 #threshold-slider::-webkit-slider-runnable-track {
     height: 8px;
     border-radius: 4px;
-    background: linear-gradient(to right, #2196F3 0%, #2196F3 var(--slider-progress, 50%), #2a2e39 var(--slider-progress, 50%), #2a2e39 100%);
+    background: linear-gradient(to right, var(--slider-track-color) 0%, var(--slider-track-color) var(--slider-progress, 50%), #2a2e39 var(--slider-progress, 50%), #2a2e39 100%);
 }
 
 #threshold-slider::-moz-range-track {
@@ -104,7 +130,7 @@
 #threshold-slider::-moz-range-progress {
     height: 8px;
     border-radius: 4px 0 0 4px;
-    background: #2196F3;
+    background: var(--slider-track-color);
 }
 
 /* Add visible track delimiters */
@@ -133,27 +159,33 @@
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: #2196F3;
+    background: var(--slider-track-color);
     cursor: pointer;
     transition: background 0.2s;
+    z-index: 25; /* Ensure thumb is above other elements */
+    pointer-events: auto; /* Ensure thumb captures mouse events */
+    position: relative; /* Needed for z-index to work */
 }
 
 #threshold-slider::-webkit-slider-thumb:hover {
-    background: #0d8bf2;
+    background: color-mix(in srgb, var(--slider-track-color) 80%, black); /* Darker shade of track color */
 }
 
 #threshold-slider::-moz-range-thumb {
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: #2196F3;
+    background: var(--slider-track-color);
     cursor: pointer;
     transition: background 0.2s;
     border: none;
+    z-index: 25; /* Ensure thumb is above other elements */
+    pointer-events: auto; /* Ensure thumb captures mouse events */
+    position: relative; /* Needed for z-index to work */
 }
 
 #threshold-slider::-moz-range-thumb:hover {
-    background: #0d8bf2;
+    background: color-mix(in srgb, var(--slider-track-color) 80%, black); /* Darker shade of track color */
 }
 
 .input-container {
@@ -184,7 +216,7 @@
 }
 
 #set-recommended {
-    background-color: #2196F3;
+    background-color: var(--bullish-candle-color, #26a69a);
     color: white;
     border: none;
     border-radius: 3px;
@@ -197,12 +229,12 @@
 }
 
 #set-recommended:hover {
-    background-color: #0d8bf2;
+    background-color: color-mix(in srgb, var(--bullish-candle-color, #26a69a) 80%, black); /* Darker shade of bullish candle color */
 }
 
 #threshold-input:focus {
     outline: none;
-    border-color: #2196F3;
+    border-color: var(--bullish-candle-color, #26a69a);
 }
 
 /* Hide spinner buttons in Webkit browsers (Chrome, Safari, Edge) */
@@ -220,6 +252,12 @@
     left: 160px !important; /* Align with sidebar width */
     z-index: 1 !important; /* Very low z-index to ensure it's below the price scale */
     padding-right: 110px !important; /* Add padding to account for price scale */
+}
+
+/* Ensure the middle section stays centered when sidebar is visible */
+.sidebar-visible #top-sidebar-middle {
+    position: relative !important;
+    left: -80px !important; /* Half of sidebar width to adjust center position */
 }
 
 /* Adjust threshold slider container position when sidebar is visible */

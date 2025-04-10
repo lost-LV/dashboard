@@ -74,7 +74,9 @@ class Updater {
 
                 // Add version info
                 const versionInfo = document.createElement('div');
-                versionInfo.textContent = `New version: ${this.updateInfo ? this.updateInfo.version : 'available'}`;
+                // Remove 'v' prefix if present in version
+                const displayVersion = this.updateInfo ? this.updateInfo.version.replace(/^v/, '') : 'available';
+                versionInfo.textContent = `New version: ${displayVersion}`;
                 versionInfo.style.textAlign = 'center';
                 versionInfo.style.marginBottom = '5px';
                 versionInfo.style.fontSize = '12px';
@@ -178,7 +180,9 @@ class Updater {
                     // Update version info if button already exists
                     const versionInfo = this.updateContainer.querySelector('div');
                     if (versionInfo) {
-                        versionInfo.textContent = `New version: ${this.updateInfo.version}`;
+                        // Remove 'v' prefix if present in version
+                        const displayVersion = this.updateInfo.version.replace(/^v/, '');
+                        versionInfo.textContent = `New version: ${displayVersion}`;
                     }
                 }
 
@@ -256,8 +260,11 @@ class Updater {
             updateNotification.style.maxWidth = '500px';
             updateNotification.style.width = '80%';
 
+            // Remove 'v' prefix if present in version
+            const displayVersion = this.updateInfo.version.replace(/^v/, '');
+
             updateNotification.innerHTML = `
-                <h2 style="margin-top: 0; color: #333;">Update Available: ${this.updateInfo.version}</h2>
+                <h2 style="margin-top: 0; color: #333;">Update Available: ${displayVersion}</h2>
                 <p style="margin-bottom: 15px;">A new version is available. Please download the latest version from GitHub.</p>
                 <div style="max-height: 150px; overflow-y: auto; margin-bottom: 15px; padding: 10px; background-color: #f5f5f5; border-radius: 4px;">
                     <h3 style="margin-top: 0; font-size: 16px;">Release Notes:</h3>

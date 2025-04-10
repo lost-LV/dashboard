@@ -20,6 +20,19 @@ class ColorCustomizer {
             sidebarBackground: 'rgb(19, 23, 34)',
             longsColor: '#26a69a',
             shortsColor: '#ef5350',
+            // Line drawing colors
+            lineColor: '#2196F3',
+            lineHighlightColor: '#4CAF50',
+            endpointColor: '#4CAF50',
+            hoveredEndpointColor: '#FF5722',
+            // Volume profile colors
+            volumeProfileColor: 'rgba(100, 149, 237, 0.6)', // Cornflower blue with transparency
+            pocColor: 'rgba(255, 165, 0, 0.9)', // Orange with transparency for POC line
+            pocBarColor: 'rgba(255, 165, 0, 0.7)', // Orange with transparency for POC bar
+            valueAreaHighColor: 'rgba(46, 204, 113, 0.7)', // Green with transparency for VAH
+            valueAreaLowColor: 'rgba(231, 76, 60, 0.7)', // Red with transparency for VAL
+            vahLineColor: 'rgba(46, 204, 113, 0.9)', // Green with transparency for VAH line
+            valLineColor: 'rgba(231, 76, 60, 0.9)', // Red with transparency for VAL line
             // Bid/Ask strength colors
             bidStrengthColor: 'rgba(38, 166, 154, 0.7)', // Green for bid strength
             askStrengthColor: 'rgba(239, 83, 80, 0.7)', // Red for ask strength
@@ -43,11 +56,26 @@ class ColorCustomizer {
             liquidationArrowHeadSize: 0.6 // Size multiplier for liquidation arrow heads
         };
 
+        // Store volume profile settings
+        this.volumeProfileSettings = {
+            // Display options
+            showPocLine: true,
+            showValueAreaHighLine: true,
+            showValueAreaLowLine: true,
+            // Lookback days (fixed at 3 days = 864 5-minute bars)
+            lookbackDays: 3
+        };
+
         // Load saved colors if available
         this.loadColors();
 
         // Create the customization menu
         this.createMenu();
+
+        // Dispatch an event to notify that color customizer is ready
+        document.dispatchEvent(new CustomEvent('colorCustomizerReady'));
+
+        // We'll listen for audio settings ready event in the createMenu method
     }
 
     loadColors() {
@@ -103,6 +131,26 @@ class ColorCustomizer {
                 console.log('No saved size settings found, using defaults');
             }
 
+            // Load volume profile settings
+            const savedVolumeProfileSettings = localStorage.getItem('volumeProfileSettings');
+            if (savedVolumeProfileSettings) {
+                const parsedVolumeProfileSettings = JSON.parse(savedVolumeProfileSettings);
+
+                // Validate and merge with defaults
+                for (const key in this.volumeProfileSettings) {
+                    if (parsedVolumeProfileSettings[key] !== undefined) {
+                        this.volumeProfileSettings[key] = parsedVolumeProfileSettings[key];
+                    }
+                }
+
+                console.log('Volume profile settings loaded from localStorage:', this.volumeProfileSettings);
+            } else {
+                console.log('No saved volume profile settings found, using defaults');
+            }
+
+            // Directly update UI elements with the loaded colors
+            this.updateUIElements();
+
             // Dispatch an event to notify other components that settings have been loaded
             document.dispatchEvent(new CustomEvent('colorsUpdated', {
                 detail: {
@@ -132,6 +180,13 @@ class ColorCustomizer {
             // Save size settings
             localStorage.setItem('chartSizeSettings', JSON.stringify(this.sizeSettings));
             console.log('Size settings saved to localStorage');
+
+            // Save volume profile settings
+            localStorage.setItem('volumeProfileSettings', JSON.stringify(this.volumeProfileSettings));
+            console.log('Volume profile settings saved to localStorage');
+
+            // Directly update UI elements with the bullish candle color
+            this.updateUIElements();
 
             // Dispatch an event to notify other components that settings have been updated
             document.dispatchEvent(new CustomEvent('colorsUpdated', {
@@ -220,7 +275,7 @@ class ColorCustomizer {
         menu.style.padding = '20px';
         menu.style.borderRadius = '8px';
         menu.style.zIndex = '10000';
-        menu.style.width = '800px'; // Increased width from 600px to 800px to ensure all content fits
+        menu.style.width = '1100px'; // Increased width from 950px to 1100px to ensure all content fits properly
         menu.style.maxHeight = '80vh'; // Taller to allow scrolling if needed
         menu.style.overflowY = 'auto'; // Enable vertical scrolling
         menu.style.overflowX = 'hidden'; // Prevent horizontal scrolling
@@ -342,8 +397,11 @@ class ColorCustomizer {
         // Create a container for tabs
         const tabsContainer = document.createElement('div');
         tabsContainer.style.display = 'flex';
+        tabsContainer.style.flexWrap = 'wrap'; // Allow tabs to wrap if needed
         tabsContainer.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
         tabsContainer.style.marginBottom = '20px';
+        tabsContainer.style.justifyContent = 'flex-start'; // Left-align tabs for better use of space
+        tabsContainer.style.gap = '5px'; // Add gap between tabs
 
         // Create a container for the content
         const contentContainer = document.createElement('div');
@@ -358,7 +416,7 @@ class ColorCustomizer {
         const createTab = (title, icon, isActive = false) => {
             // Create tab button
             const tab = document.createElement('button');
-            tab.style.padding = '10px 15px';
+            tab.style.padding = '8px 10px'; // Further reduced padding to fit more tabs
             tab.style.backgroundColor = isActive ? '#333' : 'transparent';
             tab.style.color = '#fff';
             tab.style.border = 'none';
@@ -387,7 +445,7 @@ class ColorCustomizer {
             const panel = document.createElement('div');
             panel.style.display = isActive ? 'flex' : 'none';
             panel.style.flexDirection = 'row';
-            panel.style.gap = '30px'; // Increased from 20px to 30px for better spacing
+            panel.style.gap = '80px'; // Increased from 50px to 80px for better spacing with wider menu
             panel.style.minHeight = '100%';
             panel.style.width = '100%';
             panel.style.overflow = 'visible';
@@ -397,16 +455,16 @@ class ColorCustomizer {
             leftColumn.style.flex = '1';
             leftColumn.style.display = 'flex';
             leftColumn.style.flexDirection = 'column';
-            leftColumn.style.minWidth = '48%'; // Increased from 45% to 48%
-            leftColumn.style.maxWidth = '48%'; // Added max-width to prevent overflow
+            leftColumn.style.minWidth = '40%'; // Further adjusted for wider menu
+            leftColumn.style.maxWidth = '40%'; // Further adjusted for wider menu
             leftColumn.style.overflow = 'visible';
 
             const rightColumn = document.createElement('div');
             rightColumn.style.flex = '1';
             rightColumn.style.display = 'flex';
             rightColumn.style.flexDirection = 'column';
-            rightColumn.style.minWidth = '48%'; // Increased from 45% to 48%
-            rightColumn.style.maxWidth = '48%'; // Added max-width to prevent overflow
+            rightColumn.style.minWidth = '40%'; // Further adjusted for wider menu
+            rightColumn.style.maxWidth = '40%'; // Further adjusted for wider menu
             rightColumn.style.overflow = 'visible';
 
             panel.appendChild(leftColumn);
@@ -457,8 +515,10 @@ class ColorCustomizer {
         const chartTab = createTab('Chart Colors', '🎨', true); // Make Chart Colors the default active tab
         const liquidationsTab = createTab('Liquidations', '💧', false);
         const vwapTab = createTab('VWAP', '📊', false);
-        const strengthTab = createTab('Bid/Ask', '📈', false);
-        const presetsTab = createTab('Presets', '🎭', false); // Add Presets tab between Bid/Ask and Other
+        const volumeProfileTab = createTab('Volume Profile', '📊', false); // Add Volume Profile tab
+        const presetsTab = createTab('Presets', '🎭', false); // Add Presets tab
+        const whaleWatcherTab = createTab('Whale Watcher', '🐋', false); // Add Whale Watcher tab
+        const audioTab = createTab('Audio', '🔊', false); // Add Audio tab
         const otherTab = createTab('Other', '⚙️', false);
 
         // Filter color options for each tab
@@ -471,11 +531,29 @@ class ColorCustomizer {
         const vwapColorOptions = colorOptions.filter(option =>
             ['vwapLine', 'vwapTags', 'vwapBands'].includes(option.id));
 
-        const strengthColorOptions = colorOptions.filter(option =>
-            ['bidStrengthColor', 'askStrengthColor'].includes(option.id));
+        // Removed bid/ask strength color options
 
         const otherColorOptions = colorOptions.filter(option =>
             ['sidebarBackground', 'longsColor', 'shortsColor'].includes(option.id));
+
+        // Add line drawing color options
+        const lineColorOptions = [
+            { id: 'lineColor', label: 'Line Color' },
+            { id: 'lineHighlightColor', label: 'Line Highlight Color' },
+            { id: 'endpointColor', label: 'Endpoint Color' },
+            { id: 'hoveredEndpointColor', label: 'Hovered Endpoint Color' }
+        ];
+
+        // Add volume profile color options
+        const volumeProfileColorOptions = [
+            { id: 'volumeProfileColor', label: 'Volume Profile Color', defaultColor: 'rgba(100, 149, 237, 0.6)' },
+            { id: 'pocColor', label: 'POC Line Color', defaultColor: 'rgba(255, 165, 0, 0.9)' },
+            { id: 'pocBarColor', label: 'POC Bar Color', defaultColor: 'rgba(255, 165, 0, 0.7)' },
+            { id: 'valueAreaHighColor', label: 'Value Area High Color', defaultColor: 'rgba(46, 204, 113, 0.7)' },
+            { id: 'valueAreaLowColor', label: 'Value Area Low Color', defaultColor: 'rgba(231, 76, 60, 0.7)' },
+            { id: 'vahLineColor', label: 'Value Area High Line Color', defaultColor: 'rgba(46, 204, 113, 0.9)' },
+            { id: 'valLineColor', label: 'Value Area Low Line Color', defaultColor: 'rgba(231, 76, 60, 0.9)' }
+        ];
 
         // Function to create a color section
         const createColorSection = (title, options, column) => {
@@ -529,6 +607,9 @@ class ColorCustomizer {
                     if (this.saveColors()) {
                         // Show a subtle notification that colors were saved
                         this.showNotification(`${option.label} color updated and saved`);
+
+                        // Directly update UI elements
+                        this.updateUIElements();
                     }
 
                     // Trigger chart redraw
@@ -574,9 +655,11 @@ class ColorCustomizer {
             section.appendChild(header);
 
             const presetContainer = document.createElement('div');
-            presetContainer.style.display = 'flex';
-            presetContainer.style.flexDirection = 'column';
-            presetContainer.style.gap = '10px';
+            presetContainer.style.display = 'grid';
+            presetContainer.style.gridTemplateColumns = 'repeat(2, 1fr)';
+            presetContainer.style.gap = '15px';
+            presetContainer.style.width = '100%';
+            presetContainer.style.maxWidth = '900px'; // Make container wider
 
             // Green & Red preset (default)
             const greenRedPreset = document.createElement('button');
@@ -591,7 +674,7 @@ class ColorCustomizer {
             greenRedPreset.style.fontSize = '16px'; // Increased from 14px to 16px
             greenRedPreset.style.textAlign = 'center';
             greenRedPreset.style.transition = 'all 0.2s ease';
-            greenRedPreset.style.marginBottom = '15px'; // Added margin for spacing
+            greenRedPreset.style.width = '100%'; // Make button wider
 
             // Add hover effect
             greenRedPreset.addEventListener('mouseenter', () => {
@@ -633,6 +716,7 @@ class ColorCustomizer {
                 };
                 this.saveColors();
                 this.updateColorInputs();
+                this.updateUIElements(); // Directly update UI elements
                 drawChart(); // Redraw chart with new colors
             });
             presetContainer.appendChild(greenRedPreset);
@@ -650,6 +734,7 @@ class ColorCustomizer {
             blackWhitePreset.style.fontSize = '16px'; // Increased from 14px to 16px
             blackWhitePreset.style.textAlign = 'center';
             blackWhitePreset.style.transition = 'all 0.2s ease';
+            blackWhitePreset.style.width = '100%'; // Make button wider
 
             // Add hover effect
             blackWhitePreset.addEventListener('mouseenter', () => {
@@ -691,6 +776,7 @@ class ColorCustomizer {
                 };
                 this.saveColors();
                 this.updateColorInputs();
+                this.updateUIElements(); // Directly update UI elements
                 drawChart(); // Redraw chart with new colors
             });
             presetContainer.appendChild(blackWhitePreset);
@@ -708,7 +794,7 @@ class ColorCustomizer {
             purpleWhitePreset.style.fontSize = '16px';
             purpleWhitePreset.style.textAlign = 'center';
             purpleWhitePreset.style.transition = 'all 0.2s ease';
-            purpleWhitePreset.style.marginBottom = '15px';
+            purpleWhitePreset.style.width = '100%'; // Make button wider
 
             // Add hover effect
             purpleWhitePreset.addEventListener('mouseenter', () => {
@@ -750,6 +836,7 @@ class ColorCustomizer {
                 };
                 this.saveColors();
                 this.updateColorInputs();
+                this.updateUIElements(); // Directly update UI elements
                 drawChart(); // Redraw chart with new colors
             });
             presetContainer.appendChild(purpleWhitePreset);
@@ -767,6 +854,7 @@ class ColorCustomizer {
             blueWhitePreset.style.fontSize = '16px';
             blueWhitePreset.style.textAlign = 'center';
             blueWhitePreset.style.transition = 'all 0.2s ease';
+            blueWhitePreset.style.width = '100%'; // Make button wider
 
             // Add hover effect
             blueWhitePreset.addEventListener('mouseenter', () => {
@@ -808,9 +896,250 @@ class ColorCustomizer {
                 };
                 this.saveColors();
                 this.updateColorInputs();
+                this.updateUIElements(); // Directly update UI elements
                 drawChart(); // Redraw chart with new colors
             });
             presetContainer.appendChild(blueWhitePreset);
+
+            // White & Red preset
+            const whiteRedPreset = document.createElement('button');
+            whiteRedPreset.className = 'preset-button';
+            whiteRedPreset.innerHTML = '<span style="color: #ffffff;">White</span> & <span style="color: #ef5350;">Red</span>';
+            whiteRedPreset.style.padding = '15px';
+            whiteRedPreset.style.background = 'linear-gradient(135deg, #1a1a1a, #2a2a2a)';
+            whiteRedPreset.style.border = '1px solid #444';
+            whiteRedPreset.style.borderRadius = '6px';
+            whiteRedPreset.style.color = 'white';
+            whiteRedPreset.style.cursor = 'pointer';
+            whiteRedPreset.style.fontSize = '16px';
+            whiteRedPreset.style.textAlign = 'center';
+            whiteRedPreset.style.transition = 'all 0.2s ease';
+            whiteRedPreset.style.width = '100%'; // Make button wider
+
+            // Add hover effect
+            whiteRedPreset.addEventListener('mouseenter', () => {
+                whiteRedPreset.style.backgroundColor = '#444';
+                whiteRedPreset.style.transform = 'scale(1.02)';
+            });
+
+            whiteRedPreset.addEventListener('mouseleave', () => {
+                whiteRedPreset.style.backgroundColor = '#333';
+                whiteRedPreset.style.transform = 'scale(1)';
+            });
+
+            whiteRedPreset.addEventListener('click', () => {
+                // Apply White & Red preset
+                this.colors = {
+                    ...this.colors, // Keep background and other colors
+                    // Candle colors
+                    bullishCandle: '#ffffff',
+                    bearishCandle: '#ef5350',
+                    bullishCandleBody: '#ffffff',
+                    bullishCandleBorder: '#ffffff',
+                    bullishCandleWick: '#ffffff',
+                    bearishCandleBody: '#ef5350',
+                    bearishCandleBorder: '#ef5350',
+                    bearishCandleWick: '#ef5350',
+                    // Sidebar colors
+                    longsColor: '#ffffff',
+                    shortsColor: '#ef5350',
+                    // Bid/Ask strength colors
+                    bidStrengthColor: 'rgba(255, 255, 255, 0.7)',
+                    askStrengthColor: 'rgba(239, 83, 80, 0.7)',
+                    // Liquidation colors
+                    sellLiquidationColor: 'rgba(239, 83, 80, 1.0)',
+                    buyLiquidationColor: 'rgba(255, 255, 255, 1.0)',
+                    // VWAP colors
+                    vwapLine: '#ffffff',
+                    vwapTags: '#ffffff',
+                    vwapBands: 'rgba(255, 255, 255, 0.3)'
+                };
+                this.saveColors();
+                this.updateColorInputs();
+                this.updateUIElements(); // Directly update UI elements
+                drawChart(); // Redraw chart with new colors
+            });
+            presetContainer.appendChild(whiteRedPreset);
+
+            // Green & White preset
+            const greenWhitePreset = document.createElement('button');
+            greenWhitePreset.className = 'preset-button';
+            greenWhitePreset.innerHTML = '<span style="color: #26a69a;">Green</span> & <span style="color: #ffffff;">White</span>';
+            greenWhitePreset.style.padding = '15px';
+            greenWhitePreset.style.background = 'linear-gradient(135deg, #0d1f1a, #162c25)';
+            greenWhitePreset.style.border = '1px solid #444';
+            greenWhitePreset.style.borderRadius = '6px';
+            greenWhitePreset.style.color = 'white';
+            greenWhitePreset.style.cursor = 'pointer';
+            greenWhitePreset.style.fontSize = '16px';
+            greenWhitePreset.style.textAlign = 'center';
+            greenWhitePreset.style.transition = 'all 0.2s ease';
+            greenWhitePreset.style.width = '100%'; // Make button wider
+
+            // Add hover effect
+            greenWhitePreset.addEventListener('mouseenter', () => {
+                greenWhitePreset.style.backgroundColor = '#444';
+                greenWhitePreset.style.transform = 'scale(1.02)';
+            });
+
+            greenWhitePreset.addEventListener('mouseleave', () => {
+                greenWhitePreset.style.backgroundColor = '#333';
+                greenWhitePreset.style.transform = 'scale(1)';
+            });
+
+            greenWhitePreset.addEventListener('click', () => {
+                // Apply Green & White preset
+                this.colors = {
+                    ...this.colors, // Keep background and other colors
+                    // Candle colors
+                    bullishCandle: '#26a69a',
+                    bearishCandle: '#ffffff',
+                    bullishCandleBody: '#26a69a',
+                    bullishCandleBorder: '#26a69a',
+                    bullishCandleWick: '#26a69a',
+                    bearishCandleBody: '#ffffff',
+                    bearishCandleBorder: '#ffffff',
+                    bearishCandleWick: '#ffffff',
+                    // Sidebar colors
+                    longsColor: '#26a69a',
+                    shortsColor: '#ffffff',
+                    // Bid/Ask strength colors
+                    bidStrengthColor: 'rgba(38, 166, 154, 0.7)',
+                    askStrengthColor: 'rgba(255, 255, 255, 0.7)',
+                    // Liquidation colors
+                    sellLiquidationColor: 'rgba(255, 255, 255, 1.0)',
+                    buyLiquidationColor: 'rgba(38, 166, 154, 1.0)',
+                    // VWAP colors
+                    vwapLine: '#26a69a',
+                    vwapTags: '#26a69a',
+                    vwapBands: 'rgba(38, 166, 154, 0.3)'
+                };
+                this.saveColors();
+                this.updateColorInputs();
+                this.updateUIElements(); // Directly update UI elements
+                drawChart(); // Redraw chart with new colors
+            });
+            presetContainer.appendChild(greenWhitePreset);
+
+            // Blue & Red preset
+            const blueRedPreset = document.createElement('button');
+            blueRedPreset.className = 'preset-button';
+            blueRedPreset.innerHTML = '<span style="color: #1976d2;">Blue</span> & <span style="color: #ef5350;">Red</span>';
+            blueRedPreset.style.padding = '15px';
+            blueRedPreset.style.background = 'linear-gradient(135deg, #0d1a2d, #2d1a1a)';
+            blueRedPreset.style.border = '1px solid #444';
+            blueRedPreset.style.borderRadius = '6px';
+            blueRedPreset.style.color = 'white';
+            blueRedPreset.style.cursor = 'pointer';
+            blueRedPreset.style.fontSize = '16px';
+            blueRedPreset.style.textAlign = 'center';
+            blueRedPreset.style.transition = 'all 0.2s ease';
+            blueRedPreset.style.width = '100%'; // Make button wider
+
+            // Add hover effect
+            blueRedPreset.addEventListener('mouseenter', () => {
+                blueRedPreset.style.backgroundColor = '#444';
+                blueRedPreset.style.transform = 'scale(1.02)';
+            });
+
+            blueRedPreset.addEventListener('mouseleave', () => {
+                blueRedPreset.style.backgroundColor = '#333';
+                blueRedPreset.style.transform = 'scale(1)';
+            });
+
+            blueRedPreset.addEventListener('click', () => {
+                // Apply Blue & Red preset
+                this.colors = {
+                    ...this.colors, // Keep background and other colors
+                    // Candle colors
+                    bullishCandle: '#1976d2',
+                    bearishCandle: '#ef5350',
+                    bullishCandleBody: '#1976d2',
+                    bullishCandleBorder: '#1976d2',
+                    bullishCandleWick: '#1976d2',
+                    bearishCandleBody: '#ef5350',
+                    bearishCandleBorder: '#ef5350',
+                    bearishCandleWick: '#ef5350',
+                    // Sidebar colors
+                    longsColor: '#1976d2',
+                    shortsColor: '#ef5350',
+                    // Bid/Ask strength colors
+                    bidStrengthColor: 'rgba(25, 118, 210, 0.7)',
+                    askStrengthColor: 'rgba(239, 83, 80, 0.7)',
+                    // Liquidation colors
+                    sellLiquidationColor: 'rgba(239, 83, 80, 1.0)',
+                    buyLiquidationColor: 'rgba(25, 118, 210, 1.0)',
+                    // VWAP colors
+                    vwapLine: '#1976d2',
+                    vwapTags: '#1976d2',
+                    vwapBands: 'rgba(25, 118, 210, 0.3)'
+                };
+                this.saveColors();
+                this.updateColorInputs();
+                this.updateUIElements(); // Directly update UI elements
+                drawChart(); // Redraw chart with new colors
+            });
+            presetContainer.appendChild(blueRedPreset);
+
+            // Pink & White preset
+            const pinkWhitePreset = document.createElement('button');
+            pinkWhitePreset.className = 'preset-button';
+            pinkWhitePreset.innerHTML = '<span style="color: #e91e63;">Pink</span> & <span style="color: #ffffff;">White</span>';
+            pinkWhitePreset.style.padding = '15px';
+            pinkWhitePreset.style.background = 'linear-gradient(135deg, #2d1a29, #2a2a2a)';
+            pinkWhitePreset.style.border = '1px solid #444';
+            pinkWhitePreset.style.borderRadius = '6px';
+            pinkWhitePreset.style.color = 'white';
+            pinkWhitePreset.style.cursor = 'pointer';
+            pinkWhitePreset.style.fontSize = '16px';
+            pinkWhitePreset.style.textAlign = 'center';
+            pinkWhitePreset.style.transition = 'all 0.2s ease';
+            pinkWhitePreset.style.width = '100%'; // Make button wider
+
+            // Add hover effect
+            pinkWhitePreset.addEventListener('mouseenter', () => {
+                pinkWhitePreset.style.backgroundColor = '#444';
+                pinkWhitePreset.style.transform = 'scale(1.02)';
+            });
+
+            pinkWhitePreset.addEventListener('mouseleave', () => {
+                pinkWhitePreset.style.backgroundColor = '#333';
+                pinkWhitePreset.style.transform = 'scale(1)';
+            });
+
+            pinkWhitePreset.addEventListener('click', () => {
+                // Apply Pink & White preset
+                this.colors = {
+                    ...this.colors, // Keep background and other colors
+                    // Candle colors
+                    bullishCandle: '#e91e63',
+                    bearishCandle: '#ffffff',
+                    bullishCandleBody: '#e91e63',
+                    bullishCandleBorder: '#e91e63',
+                    bullishCandleWick: '#e91e63',
+                    bearishCandleBody: '#ffffff',
+                    bearishCandleBorder: '#ffffff',
+                    bearishCandleWick: '#ffffff',
+                    // Sidebar colors
+                    longsColor: '#e91e63',
+                    shortsColor: '#ffffff',
+                    // Bid/Ask strength colors
+                    bidStrengthColor: 'rgba(233, 30, 99, 0.7)',
+                    askStrengthColor: 'rgba(255, 255, 255, 0.7)',
+                    // Liquidation colors
+                    sellLiquidationColor: 'rgba(255, 255, 255, 1.0)',
+                    buyLiquidationColor: 'rgba(233, 30, 99, 1.0)',
+                    // VWAP colors
+                    vwapLine: '#e91e63',
+                    vwapTags: '#e91e63',
+                    vwapBands: 'rgba(233, 30, 99, 0.3)'
+                };
+                this.saveColors();
+                this.updateColorInputs();
+                this.updateUIElements(); // Directly update UI elements
+                drawChart(); // Redraw chart with new colors
+            });
+            presetContainer.appendChild(pinkWhitePreset);
 
             section.appendChild(presetContainer);
             return section;
@@ -840,11 +1169,387 @@ class ColorCustomizer {
         // Add VWAP color options to the VWAP tab
         createColorSection('VWAP Colors', vwapColorOptions, vwapTab.leftColumn);
 
-        // Add bid/ask strength color options to the Strength tab
-        createColorSection('Bid/Ask Strength Colors', strengthColorOptions, strengthTab.leftColumn);
+        // Removed bid/ask strength color section
 
         // Add other color options to the Other tab
         createColorSection('Other Colors', otherColorOptions, otherTab.leftColumn);
+
+        // Add line drawing color options to the Other tab
+        createColorSection('Line Drawing Colors', lineColorOptions, otherTab.rightColumn);
+
+        // Add volume profile color options to the Volume Profile tab
+        createColorSection('Volume Profile Colors', volumeProfileColorOptions, volumeProfileTab.leftColumn);
+
+        // Add Volume Profile display options
+        const createVolumeProfileDisplayOptions = () => {
+            const section = document.createElement('div');
+            section.className = 'volume-profile-display-options';
+            section.style.marginBottom = '20px';
+
+            const header = document.createElement('h3');
+            header.textContent = 'Display Options';
+            header.style.marginBottom = '15px';
+            header.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
+            header.style.paddingBottom = '5px';
+            header.style.fontSize = '16px';
+            header.style.fontWeight = 'bold';
+            header.style.color = '#ffffff';
+            section.appendChild(header);
+
+            // Create toggle options
+            const createToggle = (id, label, defaultValue) => {
+                const container = document.createElement('div');
+                container.style.display = 'flex';
+                container.style.alignItems = 'center';
+                container.style.justifyContent = 'space-between';
+                container.style.marginBottom = '10px';
+
+                const labelElement = document.createElement('label');
+                labelElement.textContent = label;
+                labelElement.style.flexGrow = '1';
+                labelElement.style.color = '#ffffff';
+
+                // Get current value from color customizer volume profile settings
+                const currentToggleValue = window.colorCustomizer &&
+                                    window.colorCustomizer.volumeProfileSettings &&
+                                    window.colorCustomizer.volumeProfileSettings[id] !== undefined ?
+                                    window.colorCustomizer.volumeProfileSettings[id] : defaultValue;
+
+                const toggle = document.createElement('div');
+                toggle.style.position = 'relative';
+                toggle.style.width = '50px';
+                toggle.style.height = '24px';
+                toggle.style.backgroundColor = currentToggleValue ? '#4CAF50' : '#ccc';
+                toggle.style.borderRadius = '12px';
+                toggle.style.cursor = 'pointer';
+                toggle.style.transition = 'background-color 0.3s';
+
+                const toggleButton = document.createElement('div');
+                toggleButton.style.position = 'absolute';
+                toggleButton.style.top = '2px';
+                toggleButton.style.left = currentToggleValue ? '28px' : '2px';
+                toggleButton.style.width = '20px';
+                toggleButton.style.height = '20px';
+                toggleButton.style.backgroundColor = 'white';
+                toggleButton.style.borderRadius = '50%';
+                toggleButton.style.transition = 'left 0.3s';
+                toggleButton.style.boxShadow = '0 2px 5px rgba(0, 0, 0, 0.3)';
+
+                toggle.appendChild(toggleButton);
+
+                toggle.addEventListener('click', () => {
+                    // Get current value from color customizer volume profile settings
+                    const currentValue = window.colorCustomizer &&
+                                        window.colorCustomizer.volumeProfileSettings &&
+                                        window.colorCustomizer.volumeProfileSettings[id] !== undefined ?
+                                        window.colorCustomizer.volumeProfileSettings[id] : defaultValue;
+
+                    // Toggle the value
+                    const newValue = !currentValue;
+
+                    // Update the toggle appearance
+                    toggle.style.backgroundColor = newValue ? '#4CAF50' : '#ccc';
+                    toggleButton.style.left = newValue ? '28px' : '2px';
+
+                    // Update the volume profile settings
+                    if (window.colorCustomizer && window.colorCustomizer.volumeProfileSettings) {
+                        window.colorCustomizer.volumeProfileSettings[id] = newValue;
+                        window.colorCustomizer.saveColors();
+                        console.log(`Volume profile setting ${id} updated to ${newValue}`);
+
+                        // Redraw the chart
+                        if (window.drawChart) {
+                            window.drawChart();
+                        }
+                    }
+                });
+
+                container.appendChild(labelElement);
+                container.appendChild(toggle);
+                return container;
+            };
+
+            // Add toggle options
+            section.appendChild(createToggle('showPocLine', 'Show POC Line', true));
+            section.appendChild(createToggle('showValueAreaHighLine', 'Show Value Area High Line', true));
+            section.appendChild(createToggle('showValueAreaLowLine', 'Show Value Area Low Line', true));
+
+            return section;
+        };
+
+        // Volume profile configuration section removed
+
+        // Add Volume Profile display options to the Volume Profile tab
+        volumeProfileTab.rightColumn.appendChild(createVolumeProfileDisplayOptions());
+
+        // Add Whale Watcher settings
+        const createWhaleWatcherSettings = () => {
+            const section = document.createElement('div');
+            section.style.marginBottom = '20px';
+
+            const heading = document.createElement('div');
+            heading.textContent = 'Whale Watcher Options';
+            heading.style.color = '#ffffff';
+            heading.style.fontWeight = 'bold';
+            heading.style.marginBottom = '15px';
+            section.appendChild(heading);
+
+            // Create toggle for enabling/disabling whale watcher
+            const createToggle = (id, label, _defaultValue) => {
+                const container = document.createElement('div');
+                container.style.display = 'flex';
+                container.style.alignItems = 'center';
+                container.style.justifyContent = 'space-between';
+                container.style.marginBottom = '10px';
+
+                const labelElement = document.createElement('label');
+                labelElement.textContent = label;
+                labelElement.style.flexGrow = '1';
+                labelElement.style.color = '#ffffff';
+
+                // Get current value from localStorage
+                let currentValue = localStorage.getItem(id) === 'true';
+
+                // Also check the whale watcher instance for the current state
+                if (window.whaleWatcher && id === 'whaleWatcherEnabled') {
+                    currentValue = window.whaleWatcher.enabled;
+                }
+
+                // Create toggle switch
+                const toggle = document.createElement('div');
+                toggle.style.width = '50px';
+                toggle.style.height = '24px';
+                toggle.style.backgroundColor = currentValue ? '#4CAF50' : '#ccc';
+                toggle.style.borderRadius = '12px';
+                toggle.style.position = 'relative';
+                toggle.style.cursor = 'pointer';
+                toggle.style.transition = 'background-color 0.3s';
+
+                const toggleButton = document.createElement('div');
+                toggleButton.style.width = '20px';
+                toggleButton.style.height = '20px';
+                toggleButton.style.backgroundColor = '#fff';
+                toggleButton.style.borderRadius = '50%';
+                toggleButton.style.position = 'absolute';
+                toggleButton.style.top = '2px';
+                toggleButton.style.left = currentValue ? '28px' : '2px';
+                toggleButton.style.transition = 'left 0.3s';
+
+                toggle.appendChild(toggleButton);
+
+                // Add click event
+                toggle.addEventListener('click', () => {
+                    // Toggle the value
+                    const newValue = !currentValue;
+                    currentValue = newValue; // Update the local variable
+
+                    // Update the toggle appearance
+                    toggle.style.backgroundColor = newValue ? '#4CAF50' : '#ccc';
+                    toggleButton.style.left = newValue ? '28px' : '2px';
+
+                    // Save to localStorage
+                    localStorage.setItem(id, newValue.toString());
+
+                    // Update whale watcher
+                    if (window.whaleWatcher) {
+                        window.whaleWatcher.setEnabled(newValue);
+                        console.log(`Whale watcher enabled set to ${newValue} from color customizer`);
+                    }
+                });
+
+                container.appendChild(labelElement);
+                container.appendChild(toggle);
+                return container;
+            };
+
+            // Add toggle for enabling/disabling whale watcher
+            section.appendChild(createToggle('whaleWatcherEnabled', 'Enable Whale Watcher', true));
+
+            // Add description
+            const description = document.createElement('div');
+            description.style.marginTop = '20px';
+            description.style.marginBottom = '10px';
+            description.style.color = '#aaa';
+            description.style.fontSize = '14px';
+            description.style.lineHeight = '1.4';
+            description.innerHTML = 'The Whale Watcher feature detects large orders in the spot orderbook and displays them as bubbles on the chart.';
+            section.appendChild(description);
+
+            return section;
+        };
+
+        // Create threshold buttons section
+        const createThresholdSlider = () => {
+            const section = document.createElement('div');
+            section.style.marginBottom = '20px';
+
+            const heading = document.createElement('div');
+            heading.textContent = 'Whale Detection Threshold';
+            heading.style.color = '#ffffff';
+            heading.style.fontWeight = 'bold';
+            heading.style.marginBottom = '15px';
+            heading.style.textAlign = 'center';
+            section.appendChild(heading);
+
+            // Add description
+            const description = document.createElement('div');
+            description.textContent = 'Minimum USD value for an order to be considered a whale';
+            description.style.color = '#aaa';
+            description.style.fontSize = '12px';
+            description.style.marginBottom = '15px';
+            description.style.textAlign = 'center';
+            section.appendChild(description);
+
+            // Get current threshold from localStorage
+            const currentThreshold = parseFloat(localStorage.getItem('whaleWatcherThreshold')) || 1000000;
+
+            // Create a link element to load our custom CSS if it doesn't exist yet
+            if (!document.getElementById('whale-watcher-buttons-css')) {
+                const link = document.createElement('link');
+                link.id = 'whale-watcher-buttons-css';
+                link.rel = 'stylesheet';
+                link.type = 'text/css';
+                link.href = 'whale-watcher-buttons.css';
+                document.head.appendChild(link);
+            }
+
+            // Create current value display
+            const valueContainer = document.createElement('div');
+            valueContainer.className = 'whale-watcher-value-container';
+
+            const valueLabel = document.createElement('div');
+            valueLabel.textContent = 'Current Threshold: ';
+            valueLabel.className = 'whale-watcher-value-label';
+
+            const valueDisplay = document.createElement('div');
+            valueDisplay.textContent = formatThreshold(currentThreshold);
+            valueDisplay.className = 'whale-watcher-value-display';
+
+            valueContainer.appendChild(valueLabel);
+            valueContainer.appendChild(valueDisplay);
+            section.appendChild(valueContainer);
+
+            // Create buttons container
+            const buttonsContainer = document.createElement('div');
+            buttonsContainer.className = 'whale-watcher-buttons-container';
+
+            // Constants for threshold values
+            const min = 100000; // 100K
+            const max = 5000000; // 5M
+            const step = 50000; // 50K
+
+            // Function to update the threshold
+            const updateThreshold = (value) => {
+                // Update value display
+                valueDisplay.textContent = formatThreshold(value);
+
+                // Save to localStorage
+                localStorage.setItem('whaleWatcherThreshold', value.toString());
+
+                // Update whale watcher
+                if (window.whaleWatcher) {
+                    window.whaleWatcher.setThreshold(value);
+                    console.log(`Whale watcher threshold set to ${value} from color customizer`);
+                }
+
+                // Update button highlighting
+                Array.from(buttonsContainer.children).forEach(button => {
+                    const buttonValue = parseInt(button.dataset.value);
+                    if (buttonValue === value) {
+                        button.classList.add('active');
+                    } else {
+                        button.classList.remove('active');
+                    }
+                });
+            };
+
+            // Create buttons for common values
+            const commonValues = [
+                { label: '$100K', value: 100000 },
+                { label: '$250K', value: 250000 },
+                { label: '$500K', value: 500000 },
+                { label: '$750K', value: 750000 },
+                { label: '$1M', value: 1000000 },
+                { label: '$2M', value: 2000000 },
+                { label: '$3M', value: 3000000 },
+                { label: '$4M', value: 4000000 },
+                { label: '$5M', value: 5000000 }
+            ];
+
+            // Add common value buttons
+            commonValues.forEach(item => {
+                const button = document.createElement('button');
+                button.textContent = item.label;
+                button.dataset.value = item.value;
+                button.className = 'whale-watcher-button';
+                if (currentThreshold === item.value) {
+                    button.classList.add('active');
+                }
+
+                // Add click handler
+                button.addEventListener('click', () => {
+                    updateThreshold(item.value);
+                });
+
+                buttonsContainer.appendChild(button);
+            });
+
+            section.appendChild(buttonsContainer);
+
+            // Create fine-tuning buttons container
+            const fineTuningContainer = document.createElement('div');
+            fineTuningContainer.className = 'whale-watcher-fine-tuning-container';
+
+            // Create decrease button (-50K)
+            const decreaseButton = document.createElement('button');
+            decreaseButton.textContent = '-50K';
+            decreaseButton.className = 'whale-watcher-button';
+
+            // Add click handler
+            decreaseButton.addEventListener('click', () => {
+                // Always get the current threshold value from localStorage
+                const currentValue = parseFloat(localStorage.getItem('whaleWatcherThreshold')) || 1000000;
+                const newValue = Math.max(min, currentValue - step);
+                updateThreshold(newValue);
+            });
+
+            // Create increase button (+50K)
+            const increaseButton = document.createElement('button');
+            increaseButton.textContent = '+50K';
+            increaseButton.className = 'whale-watcher-button';
+
+            // Add click handler
+            increaseButton.addEventListener('click', () => {
+                // Always get the current threshold value from localStorage
+                const currentValue = parseFloat(localStorage.getItem('whaleWatcherThreshold')) || 1000000;
+                const newValue = Math.min(max, currentValue + step);
+                updateThreshold(newValue);
+            });
+
+            fineTuningContainer.appendChild(decreaseButton);
+            fineTuningContainer.appendChild(increaseButton);
+            section.appendChild(fineTuningContainer);
+
+            return section;
+        };
+
+        // Format threshold value for display
+        function formatThreshold(value) {
+            if (value >= 1000000) {
+                // For values over 1M, show 2 decimal places to display thousands
+                return '$' + (value / 1000000).toFixed(2) + 'M';
+            } else if (value >= 1000) {
+                return '$' + (value / 1000).toFixed(0) + 'K';
+            } else {
+                return '$' + value;
+            }
+        }
+
+        // Add Whale Watcher settings to the Whale Watcher tab
+        whaleWatcherTab.leftColumn.appendChild(createWhaleWatcherSettings());
+        whaleWatcherTab.rightColumn.appendChild(createThresholdSlider());
+
+        // Configuration options removed
 
         // Organize opacity options by tab
         const vwapOpacityOptions = [
@@ -911,6 +1616,9 @@ class ColorCustomizer {
                 if (this.saveColors()) {
                     // Show a subtle notification that settings were saved
                     this.showNotification(`${option.label} updated and saved`);
+
+                    // Directly update UI elements
+                    this.updateUIElements();
                 }
 
                 // Trigger chart redraw
@@ -962,6 +1670,68 @@ class ColorCustomizer {
 
         // Add size sliders to Liquidations tab
         createSliderSection('Liquidation Arrow Size', liquidationSizeOptions, this.sizeSettings, liquidationsTab.rightColumn);
+
+        // Function to populate the audio tab
+        const populateAudioTab = () => {
+            // Clear existing content
+            audioTab.leftColumn.innerHTML = '';
+            audioTab.rightColumn.innerHTML = '';
+
+            if (window.audioSettingsInstance) {
+                // Add Audio settings header
+                const createAudioHeader = () => {
+                    const section = document.createElement('div');
+                    section.style.marginBottom = '20px';
+
+                    const heading = document.createElement('div');
+                    heading.textContent = 'Audio Notification Settings';
+                    heading.style.color = '#ffffff';
+                    heading.style.fontWeight = 'bold';
+                    heading.style.marginBottom = '15px';
+                    section.appendChild(heading);
+
+                    const description = document.createElement('div');
+                    description.style.marginBottom = '20px';
+                    description.style.color = '#aaa';
+                    description.style.fontSize = '14px';
+                    description.style.lineHeight = '1.4';
+                    description.innerHTML = 'Configure audio notifications for large liquidations. ' +
+                        'These settings control when and how sounds are played when significant liquidations occur.';
+                    section.appendChild(description);
+
+                    return section;
+                };
+
+                // Add header to the Audio tab
+                audioTab.leftColumn.appendChild(createAudioHeader());
+
+                // Populate the audio tab with settings
+                window.audioSettingsInstance.populateAudioSettingsPanel(audioTab.leftColumn, audioTab.rightColumn);
+                console.log('Audio tab populated with settings');
+            } else {
+                // Add a message that audio settings are not available
+                const message = document.createElement('div');
+                message.style.padding = '20px';
+                message.style.backgroundColor = 'rgba(244, 67, 54, 0.1)';
+                message.style.borderLeft = '3px solid #F44336';
+                message.style.color = '#ffffff';
+                message.style.fontSize = '14px';
+                message.innerHTML = 'Audio settings are not available. Please refresh the page and try again.';
+                audioTab.leftColumn.appendChild(message);
+                console.log('Audio settings not available, showing error message');
+            }
+        };
+
+        // Initial population of the audio tab
+        populateAudioTab();
+
+        // Listen for audio settings ready event to update the tab
+        document.addEventListener('audioSettingsReady', () => {
+            console.log('Audio settings ready event received in color customizer');
+            if (audioTab) {
+                populateAudioTab();
+            }
+        });
 
 
 
@@ -1023,11 +1793,11 @@ class ColorCustomizer {
                 const viewportWidth = window.innerWidth;
                 const viewportHeight = window.innerHeight;
 
-                // Keep at least 100px of the menu visible on each side
-                if (menuRect.right < 100) menu.style.left = `${100 - menuRect.width}px`;
-                if (menuRect.bottom < 100) menu.style.top = `${100 - menuRect.height}px`;
-                if (menuRect.left > viewportWidth - 100) menu.style.left = `${viewportWidth - 100}px`;
-                if (menuRect.top > viewportHeight - 100) menu.style.top = `${viewportHeight - 100}px`;
+                // Keep at least 200px of the menu visible on each side (increased for wider menu)
+                if (menuRect.right < 200) menu.style.left = `${200 - menuRect.width}px`;
+                if (menuRect.bottom < 200) menu.style.top = `${200 - menuRect.height}px`;
+                if (menuRect.left > viewportWidth - 200) menu.style.left = `${viewportWidth - 200}px`;
+                if (menuRect.top > viewportHeight - 200) menu.style.top = `${viewportHeight - 200}px`;
             }
         });
 
@@ -1065,6 +1835,14 @@ class ColorCustomizer {
         resetButton.addEventListener('click', () => {
             // Reset to defaults
             this.reset();
+
+            // Also reset volume profile settings
+            this.volumeProfileSettings = {
+                // Display options
+                showPocLine: true,
+                showValueAreaHighLine: true,
+                showValueAreaLowLine: true
+            };
 
             // Update all color pickers
             const colorPickers = menu.querySelectorAll('input[type="color"]');
@@ -1118,6 +1896,9 @@ class ColorCustomizer {
             // Save to localStorage
             if (this.saveColors()) {
                 this.showNotification('Settings reset to defaults and saved');
+
+                // Directly update UI elements
+                this.updateUIElements();
             }
 
             // Trigger chart redraw
@@ -1246,6 +2027,18 @@ class ColorCustomizer {
             sidebarBackground: 'rgb(19, 23, 34)',
             longsColor: '#26a69a',
             shortsColor: '#ef5350',
+            // Line drawing colors
+            lineColor: '#2196F3',
+            lineHighlightColor: '#4CAF50',
+            endpointColor: '#4CAF50',
+            hoveredEndpointColor: '#FF5722',
+            // Volume profile colors
+            volumeProfileColor: 'rgba(100, 149, 237, 0.6)', // Cornflower blue with transparency
+            pocColor: 'rgba(255, 165, 0, 0.9)', // Orange with transparency
+            valueAreaHighColor: 'rgba(46, 204, 113, 0.7)', // Green with transparency for VAH
+            valueAreaLowColor: 'rgba(231, 76, 60, 0.7)', // Red with transparency for VAL
+            vahLineColor: 'rgba(46, 204, 113, 0.9)', // Green with transparency for VAH line
+            valLineColor: 'rgba(231, 76, 60, 0.9)', // Red with transparency for VAL line
             // Liquidation colors
             sellLiquidationColor: 'rgba(220, 50, 50, 1.0)', // Red for sell liquidations
             buyLiquidationColor: 'rgba(0, 200, 200, 1.0)' // Aqua for buy liquidations
@@ -1270,10 +2063,179 @@ class ColorCustomizer {
     getColor(id) {
         return this.colors[id] || null;
     }
+
+    getDefaultVolumeProfileColor(id) {
+        // Default volume profile colors
+        const defaultVolumeProfileColors = {
+            volumeProfileColor: 'rgba(100, 149, 237, 0.6)', // Cornflower blue with transparency
+            pocColor: 'rgba(255, 165, 0, 0.9)', // Orange with transparency for POC line
+            pocBarColor: 'rgba(255, 165, 0, 0.7)', // Orange with transparency for POC bar
+            valueAreaHighColor: 'rgba(46, 204, 113, 0.7)', // Green with transparency
+            valueAreaLowColor: 'rgba(231, 76, 60, 0.7)', // Red with transparency
+            vahLineColor: 'rgba(46, 204, 113, 0.9)', // Green with transparency for VAH line
+            valLineColor: 'rgba(231, 76, 60, 0.9)' // Red with transparency for VAL line
+        };
+
+        return defaultVolumeProfileColors[id] || null;
+    }
+
+    updateUIElements() {
+        console.log('Directly updating UI elements with bullish candle color');
+
+        // Get the bullish candle color
+        const bullishColor = this.colors.bullishCandleBody || this.colors.bullishCandle || '#26a69a';
+        console.log('Using bullish candle color:', bullishColor);
+
+        // Force all elements to use this color directly
+        this.updateAllElementsWithColor(bullishColor);
+    }
+
+    // Function to determine if a color is bright (needs dark text)
+    isBrightColor(hexColor) {
+        // Convert hex to RGB
+        let r, g, b;
+
+        if (hexColor.startsWith('#')) {
+            // Handle hex color
+            const hex = hexColor.substring(1);
+            r = parseInt(hex.substring(0, 2), 16);
+            g = parseInt(hex.substring(2, 4), 16);
+            b = parseInt(hex.substring(4, 6), 16);
+        } else if (hexColor.startsWith('rgb')) {
+            // Handle rgb/rgba color
+            const rgbMatch = hexColor.match(/rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*[\d.]+)?\s*\)/);
+            if (rgbMatch) {
+                r = parseInt(rgbMatch[1]);
+                g = parseInt(rgbMatch[2]);
+                b = parseInt(rgbMatch[3]);
+            } else {
+                // Default to not bright if can't parse
+                return false;
+            }
+        } else {
+            // Default to not bright if unknown format
+            return false;
+        }
+
+        // Calculate perceived brightness using the formula
+        // (0.299*R + 0.587*G + 0.114*B)
+        const brightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+        // If brightness is greater than 0.65, consider it bright
+        return brightness > 0.65;
+    }
+
+    updateAllElementsWithColor(color) {
+        console.log('Updating all UI elements with color:', color);
+
+        // Determine if the color is bright (needs dark text)
+        const isBright = this.isBrightColor(color);
+        const textColor = isBright ? 'black' : 'white';
+        console.log(`Color ${color} is ${isBright ? 'bright' : 'dark'}, using ${textColor} text`);
+
+        // Update CSS variables
+        document.documentElement.style.setProperty('--bullish-candle-color', color);
+        document.documentElement.style.setProperty('--slider-track-color', color);
+
+        // Update custom slider elements
+        const customSliders = document.querySelectorAll('.custom-slider-container');
+        customSliders.forEach(slider => {
+            // Update track fill
+            const trackFill = slider.querySelector('.custom-slider-track-fill');
+            if (trackFill) {
+                trackFill.style.backgroundColor = color;
+                trackFill.style.boxShadow = `0 0 2px ${color}`;
+            }
+
+            // Update thumb
+            const thumb = slider.querySelector('.custom-slider-thumb');
+            if (thumb) {
+                thumb.style.backgroundColor = color;
+                thumb.style.boxShadow = `0 0 5px ${color}, 0 0 0 2px ${color}`;
+            }
+
+            // Update min/max lines
+            const minLine = slider.querySelector('.min-line');
+            if (minLine) {
+                minLine.style.backgroundColor = color;
+            }
+
+            const maxLine = slider.querySelector('.max-line');
+            if (maxLine) {
+                maxLine.style.backgroundColor = color;
+            }
+        });
+
+        // Update threshold slider elements
+        const thresholdSlider = document.getElementById('threshold-slider');
+        if (thresholdSlider) {
+            // We can't directly modify the pseudo-elements, but we can update the CSS variable
+            // that controls their appearance
+            document.documentElement.style.setProperty('--slider-track-color', color);
+        }
+
+        // Update recommended value text
+        const recommendedValue = document.getElementById('recommended-value');
+        if (recommendedValue) {
+            recommendedValue.style.color = color;
+        }
+
+        // Update set recommended button
+        const setRecommendedButton = document.getElementById('set-recommended');
+        if (setRecommendedButton) {
+            setRecommendedButton.style.backgroundColor = color;
+            setRecommendedButton.style.color = textColor;
+        }
+
+        // Update input focus border color
+        const thresholdInput = document.getElementById('threshold-input');
+        if (thresholdInput) {
+            thresholdInput.style.borderColor = color;
+        }
+
+        // Update active buttons
+        const activeButtons = document.querySelectorAll('.active');
+        activeButtons.forEach(button => {
+            // Only update buttons that should have a background when active
+            if (button.classList.contains('timeframe-button') ||
+                button.id === 'volume-profile-toggle-button' ||
+                button.id === 'line-drawing-toggle-button' ||
+                button.id === 'measurement-tool-toggle-button') {
+                button.style.backgroundColor = color;
+                button.style.color = textColor;
+                console.log('ColorCustomizer updated active button:', button.id || button.className, 'bg color =', color, 'text color =', textColor);
+            }
+        });
+
+        // Timeframe buttons are already handled in the active buttons section above
+
+        // Individual buttons are already handled in the active buttons section above
+    }
 }
 
 // Create global instance
 window.colorCustomizer = new ColorCustomizer();
+
+// Initialize UI elements with current colors
+document.addEventListener('DOMContentLoaded', () => {
+    if (window.colorCustomizer) {
+        // Wait a bit for all elements to be created
+        setTimeout(() => {
+            window.colorCustomizer.updateUIElements();
+        }, 500);
+    }
+});
+
+// Also update on window load
+window.addEventListener('load', () => {
+    if (window.colorCustomizer) {
+        window.colorCustomizer.updateUIElements();
+        // Try again after a delay
+        setTimeout(() => {
+            window.colorCustomizer.updateUIElements();
+        }, 1000);
+    }
+});
 
 // Add global method to show the color customization menu
 window.showColorCustomizer = function() {

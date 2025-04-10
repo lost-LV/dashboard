@@ -1,4 +1,10 @@
 (() => {
+    // Chart features:
+    // - Volume Profile: Shows volume distribution across price levels (5-day lookback, 800 rows)
+    //   Toggle with the Volume button in the top toolbar
+    // - Measurement Tool: Press Shift + Left Click to start measuring, then drag to measure price movements
+    //   (You can release Shift after starting). Shows percentage change between two points
+    //
     // Function to get customized colors
     function getColor(id, defaultColor) {
         if (window.colorCustomizer) {
@@ -7,55 +13,106 @@
         return defaultColor;
     }
 
-    // Function to determine if a color is bright (needs dark text)
-    function isBrightColor(color) {
-        // For rgba format
-        if (color.startsWith('rgba')) {
-            const rgbaMatch = color.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
-            if (rgbaMatch) {
-                const r = parseInt(rgbaMatch[1]);
-                const g = parseInt(rgbaMatch[2]);
-                const b = parseInt(rgbaMatch[3]);
-                // Calculate perceived brightness using the formula: (0.299*R + 0.587*G + 0.114*B)
-                const brightness = (0.299 * r + 0.587 * g + 0.114 * b);
-                return brightness > 160; // Threshold for bright colors
-            }
-        }
-        // For hex format
-        else if (color.startsWith('#')) {
-            const r = parseInt(color.slice(1, 3), 16);
-            const g = parseInt(color.slice(3, 5), 16);
-            const b = parseInt(color.slice(5, 7), 16);
-            // Calculate perceived brightness
-            const brightness = (0.299 * r + 0.587 * g + 0.114 * b);
-            return brightness > 160; // Threshold for bright colors
-        }
-        return false; // Default to false for unknown formats
+    // Function to set CSS variables for colors
+    function setColorVariables() {
+        const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+        document.documentElement.style.setProperty('--bullish-candle-color', bullishColor);
+        console.log('Setting bullish candle color CSS variable to:', bullishColor);
+
+        const bearishColor = getColor('bearishCandleBody', getColor('bearishCandle', '#ef5350'));
+        document.documentElement.style.setProperty('--bearish-candle-color', bearishColor);
+        console.log('Setting bearish candle color CSS variable to:', bearishColor);
     }
+
+    // Function to determine if a color is bright (needs dark text)
+    function isBrightColor(hexColor) {
+        // Convert hex to RGB
+        let r, g, b;
+
+        if (hexColor.startsWith('#')) {
+            // Handle hex color
+            const hex = hexColor.substring(1);
+            r = parseInt(hex.substring(0, 2), 16);
+            g = parseInt(hex.substring(2, 4), 16);
+            b = parseInt(hex.substring(4, 6), 16);
+        } else if (hexColor.startsWith('rgb')) {
+            // Handle rgb/rgba color
+            const rgbMatch = hexColor.match(/rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*[\d.]+)?\s*\)/);
+            if (rgbMatch) {
+                r = parseInt(rgbMatch[1]);
+                g = parseInt(rgbMatch[2]);
+                b = parseInt(rgbMatch[3]);
+            } else {
+                // Default to not bright if can't parse
+                return false;
+            }
+        } else {
+            // Default to not bright if unknown format
+            return false;
+        }
+
+        // Calculate perceived brightness using the formula
+        // (0.299*R + 0.587*G + 0.114*B)
+        const brightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+        // If brightness is greater than 0.65, consider it bright
+        return brightness > 0.65;
+    }
+
+    // Make the isBrightColor function available globally
+    window.isBrightColor = isBrightColor;
+
+    // Function to get appropriate text color based on background color
+    function getTextColorForBackground(bgColor) {
+        return isBrightColor(bgColor) ? 'black' : 'white';
+    }
+
+    // Make the getTextColorForBackground function available globally
+    window.getTextColorForBackground = getTextColorForBackground;
+
+    // Function to calculate the exact center position accounting for sidebar
+    function calculateCenterPosition() {
+        // Check if sidebar is visible
+        const isSidebarVisible = document.body.classList.contains('sidebar-visible');
+        const sidebarWidth = isSidebarVisible ? 160 : 0; // Match the sidebar width in CSS
+
+        // Calculate the container width accounting for sidebar
+        const containerWidth = window.innerWidth - sidebarWidth;
+
+        // Calculate the exact center position using the same formula as the depth pane drag button
+        const fullWidth = containerWidth - priceScaleWidth;
+        return fullWidth / 2;
+    }
+
+    // Make the function globally available
+    window.calculateCenterPosition = calculateCenterPosition;
+
+
 
     // Data storage
     let bars = [];
     let orderbook = { bids: [], asks: [] };
     let bidAskTags = [];
 
+    // Variables for building candles from Bitstamp trades
+    let currentCandle = null;
+    let currentCandleTime = 0;
+
+    // Flag to indicate a coin change is in progress
+    let isCoinChangeInProgress = false;
+
+    // Flag to prevent creating multiple bars for the same interval
+    let barCreatedForCurrentInterval = false;
+
     // Make data storage globally accessible
     window.bars = bars;
     window.orderbook = orderbook;
     window.bidAskTags = bidAskTags;
+    window.currentCandle = currentCandle;
+    window.currentCandleTime = currentCandleTime;
 
-    // Price variables for different coins
-    let btcPrice = 0;
-    let ethPrice = 0;
-    let solPrice = 0;
-    let ltcPrice = 0;
-    let xrpPrice = 0;
-
-    // Make price variables globally accessible
-    window.btcPrice = btcPrice;
-    window.ethPrice = ethPrice;
-    window.solPrice = solPrice;
-    window.ltcPrice = ltcPrice;
-    window.xrpPrice = xrpPrice;
+    // Global price variable for current coin
+    window.latestPrice = 0;
 
     let currentPriceY = null; // Y position of current price for price tag
 
@@ -66,12 +123,15 @@
     const TIMEFRAME_1M = 1;
     const TIMEFRAME_5M = 5;
     const TIMEFRAME_15M = 15;
-    let currentTimeframe = TIMEFRAME_5M; // Default to 5 minute
+    const TIMEFRAME_1H = 60;
+    // Load saved timeframe or default to 5 minute
+    let currentTimeframe = localStorage.getItem('currentTimeframe') ? parseInt(localStorage.getItem('currentTimeframe')) : TIMEFRAME_5M;
 
     // Make timeframe variables globally accessible
     window.TIMEFRAME_1M = TIMEFRAME_1M;
     window.TIMEFRAME_5M = TIMEFRAME_5M;
     window.TIMEFRAME_15M = TIMEFRAME_15M;
+    window.TIMEFRAME_1H = TIMEFRAME_1H;
     window.currentTimeframe = currentTimeframe;
 
     // Bar interval and countdown
@@ -83,11 +143,17 @@
     window.barIntervalMs = barIntervalMs;
 
     // View state
-    let viewOffset = 0;
-    let visibleBars = 25; // Adjusted to 25 as requested
+    // Initialize viewOffset to show the most recent bars by default
+    let viewOffset = localStorage.getItem('chartViewOffset') ? parseFloat(localStorage.getItem('chartViewOffset')) : 0;
+    let visibleBars = localStorage.getItem('chartVisibleBars') ? parseInt(localStorage.getItem('chartVisibleBars')) : 25; // Default to 25 bars
     let mouseX = null, mouseY = null;
     let initialViewOffset = null;
     let isDragging = false;
+
+    // Price scale state
+    let minPrice = localStorage.getItem('chartMinPrice') ? parseFloat(localStorage.getItem('chartMinPrice')) : 0;
+    let maxPrice = localStorage.getItem('chartMaxPrice') ? parseFloat(localStorage.getItem('chartMaxPrice')) : 100000;
+    let isPriceScaleManuallySet = localStorage.getItem('chartPriceScaleManuallySet') === 'true';
 
     // Crosshair state
     let hoveredBarIndex = -1;
@@ -95,6 +161,115 @@
     let hoveredLimitOrder = null; // Track hovered limit order
     let showZoomLens = false; // Flag to control zoom lens visibility
     let snappedMouseX = null; // For bar-to-bar crosshair movement
+
+    // Line drawing state
+    let isLineDrawingMode = localStorage.getItem('isLineDrawingMode') === 'true';
+    let isDrawingLine = false;
+    let currentLine = null;
+    let lines = [];
+
+    // Load saved lines from localStorage
+    try {
+        const savedLines = localStorage.getItem('chartLines');
+        if (savedLines) {
+            const parsedLines = JSON.parse(savedLines);
+
+            // Check if lines have the required properties (for backward compatibility)
+            lines = parsedLines.filter(line => {
+                // Check if line has all required properties
+                const hasRequiredProps = (
+                    line.startPrice !== undefined &&
+                    line.endPrice !== undefined &&
+                    line.startBarIndex !== undefined &&
+                    line.endBarIndex !== undefined
+                );
+
+                // If not, try to convert from old format if possible
+                if (!hasRequiredProps && line.startX !== undefined && line.endX !== undefined) {
+                    // This is an old format line, we can't properly convert it
+                    // Just skip it
+                    return false;
+                }
+
+                return hasRequiredProps;
+            });
+
+            console.log(`Loaded ${lines.length} saved lines from localStorage`);
+        }
+    } catch (error) {
+        console.error('Error loading saved lines:', error);
+    }
+
+    // Make line drawing state globally accessible
+    window.isLineDrawingMode = isLineDrawingMode;
+    window.lines = lines;
+
+    // Function to save lines to localStorage
+    function saveLines() {
+        try {
+            localStorage.setItem('chartLines', JSON.stringify(lines));
+            console.log(`Saved ${lines.length} lines to localStorage`);
+        } catch (error) {
+            console.error('Error saving lines:', error);
+        }
+    }
+
+    // Function to update the line drawing button state
+    function updateLineDrawingButtonState() {
+        const button = document.getElementById('line-drawing-toggle-button');
+        if (!button) return;
+
+        // Update button appearance based on current state
+        if (isLineDrawingMode) {
+            button.classList.add('active');
+            // Set background color to bullish candle color
+            const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+            button.style.backgroundColor = bullishColor;
+            // Set text color based on background brightness
+            const textColor = isBrightColor(bullishColor) ? 'black' : 'white';
+            button.style.color = textColor;
+            console.log('Draw button state updated: bg color =', bullishColor, 'text color =', textColor);
+        } else {
+            button.classList.remove('active');
+            // Reset to default styling
+            button.style.backgroundColor = '#2a2e39';
+            button.style.color = '#aaa';
+        }
+
+        // Make sure timeframe buttons maintain their state
+        const activeTimeframeButton = document.querySelector('.timeframe-button[data-timeframe].active');
+        if (activeTimeframeButton) {
+            const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+            activeTimeframeButton.style.backgroundColor = bullishColor;
+            const textColor = isBrightColor(bullishColor) ? 'black' : 'white';
+            activeTimeframeButton.style.color = textColor;
+        }
+    }
+
+    // Measurement tool state
+    let isMeasuring = false;
+    let measurementStart = null;
+    let measurementEnd = null;
+    let isMeasurementToolActive = localStorage.getItem('isMeasurementToolActive') === 'true';
+
+    // Initialize measurement flag in window scope
+    window.measurementInitiated = false;
+
+    // Volume Profile state
+    let isVolumeProfileVisible = localStorage.getItem('isVolumeProfileVisible') === 'true';
+    console.log('Initial volume profile visibility:', isVolumeProfileVisible, 'from localStorage:', localStorage.getItem('isVolumeProfileVisible'));
+    let volumeProfileData = {
+        pricePoints: [],
+        maxVolume: 0,
+        totalVolume: 0,
+        valueAreaHigh: 0,
+        valueAreaLow: 0,
+        poc: 0 // Point of Control (price level with highest volume)
+    };
+
+    // Make volume profile state globally accessible
+    window.isVolumeProfileVisible = isVolumeProfileVisible;
+    window.volumeProfileData = volumeProfileData;
 
     // VWAP state
     let vwapData = {
@@ -107,11 +282,32 @@
         points: []
     };
 
-    // VWAP visibility toggle
-    let isVwapVisible = localStorage.getItem('isVwapVisible') !== 'false'; // Default to true if not set
+    // VWAP visibility toggle - read from localStorage or default to false
+    let isVwapVisible = localStorage.getItem('isVwapVisible') === 'true';
+    // Force it to be true to restore VWAP
+    isVwapVisible = true;
+    localStorage.setItem('isVwapVisible', 'true');
+    // Make it globally accessible
+    window.isVwapVisible = isVwapVisible;
 
     // Bid/Ask strength visibility toggle
     let isBidAskStrengthVisible = localStorage.getItem('isBidAskStrengthVisible') !== 'false'; // Default to true if not set
+    // Force it to be true to restore the depth indicators
+    isBidAskStrengthVisible = true;
+    localStorage.setItem('isBidAskStrengthVisible', 'true');
+    // Make it globally accessible
+    window.isBidAskStrengthVisible = isBidAskStrengthVisible;
+    console.log('Initial depth indicators visibility:', isBidAskStrengthVisible, 'from localStorage:', localStorage.getItem('isBidAskStrengthVisible'));
+
+    // Create a variable to store the unfiltered orderbook data
+    let unfilteredOrderbook = { bids: [], asks: [] };
+
+    // Make unfilteredOrderbook globally accessible
+    window.unfilteredOrderbook = unfilteredOrderbook;
+
+    // Initialize orderbook with empty arrays to prevent null errors
+    orderbook = { bids: [], asks: [] };
+    window.orderbook = orderbook;
 
     // User-defined minimum order values for heatmap (in thousands of USD) for each coin
     let coinMinOrderValues = {
@@ -158,9 +354,7 @@
     let priceScaleDragStartY = null;
     let priceScaleDragStartMinPrice = null;
     let priceScaleDragStartMaxPrice = null;
-    let minPrice = 0;
-    let maxPrice = 100000; // Use a larger initial range
-    let isPriceScaleManuallySet = false;
+    // minPrice, maxPrice, and isPriceScaleManuallySet are now declared at the top of the file
 
     // Chart dragging state
     let isChartDragging = false;
@@ -180,7 +374,7 @@
 
     // Bid/Ask strength histogram settings
     let histogramHeight = parseInt(localStorage.getItem('histogramHeight')) || 35; // Load saved height or default to 35 (reduced from 40)
-    const histogramPaneGap = 0; // No gap between histogram pane and time scale to avoid white line
+    const histogramPaneGap = 2; // Small gap between histogram panes
     let isHistogramResizing = false;
     let histogramResizeStartY = 0;
     let histogramResizeStartHeight = 0;
@@ -301,19 +495,6 @@
     window.bitstampWsManager = bitstampWsManager;
 
     // --- Helper Functions ---
-    // Throttle function to limit how often a function can be called
-    function throttle(func, limit) {
-        let inThrottle;
-        return function() {
-            const args = arguments;
-            const context = this;
-            if (!inThrottle) {
-                func.apply(context, args);
-                inThrottle = true;
-                setTimeout(() => inThrottle = false, limit);
-            }
-        };
-    }
 
     function resizeCanvas() {
         if (!canvas) return;
@@ -321,6 +502,11 @@
         // Check if sidebar is visible
         const isSidebarVisible = document.body.classList.contains('sidebar-visible');
         const sidebarWidth = isSidebarVisible ? 160 : 0; // Use fixed width instead of DOM measurement
+
+        // Recalculate center position when canvas is resized
+        // This will update the global function's calculation
+        const centerX = calculateCenterPosition();
+        console.log('Center position after resize:', centerX);
 
         // Get the container element to match its dimensions
         const container = document.getElementById('container');
@@ -389,15 +575,16 @@
             // Get current coin info
             if (window.coinManager) {
                 const coin = window.coinManager.getCurrentCoin();
-                const coinSymbol = coin.symbol.toLowerCase();
-                window[`${coinSymbol}Price`] = currentPrice;
+
+                // Update global latest price
+                window.latestPrice = currentPrice;
 
                 // Format price according to coin's precision
                 const formattedPrice = currentPrice.toFixed(coin.pricePrecision);
-                document.title = `${coin.symbol}/USDT: ${formattedPrice}`;
+                document.title = `${formattedPrice}`;
             } else {
-                btcPrice = currentPrice;
-                document.title = `BTC/USDT: ${currentPrice.toFixed(2)}`;
+                window.latestPrice = currentPrice;
+                document.title = `${currentPrice.toFixed(2)}`;
             }
         }
     }
@@ -464,12 +651,41 @@
     function handleCoinChange(coin) {
         console.log(`Chart handling coin change to ${coin.symbol}`);
 
+        // Set flag to indicate a coin change is in progress
+        isCoinChangeInProgress = true;
+        console.log(`Coin change in progress flag set to: ${isCoinChangeInProgress}`);
+
         // Update current pair
         currentPair = coin.bybitSymbol;
 
-        // Force immediate update of the coin indicator if the function exists
-        if (typeof drawCoinIndicator === 'function') {
-            drawCoinIndicator();
+        // Reset all chart-related data to prevent any data from the previous coin persisting
+        console.log(`Completely resetting all data for coin change to ${coin.symbol}`);
+
+        // Reset current candle data
+        currentCandle = null;
+        currentCandleTime = 0;
+        barCreatedForCurrentInterval = false;
+
+        // Reset global price variable
+        window.latestPrice = 0;
+
+        // Update the coin indicator in the top bar via the updateCoinIndicator function
+        if (typeof updateCoinIndicator === 'function') {
+            updateCoinIndicator();
+        }
+
+        // Reset volume profile data for the new coin
+        volumeProfileData.pricePoints = [];
+        volumeProfileData.maxVolume = 0;
+        volumeProfileData.totalVolume = 0;
+        volumeProfileData.valueAreaHigh = 0;
+        volumeProfileData.valueAreaLow = 0;
+        volumeProfileData.poc = 0;
+
+        // If volume profile is visible, recalculate it for the new coin
+        if (isVolumeProfileVisible) {
+            console.log('Volume profile is visible, recalculating for new coin:', coin.symbol);
+            // We'll calculate the volume profile after fetching historical data
         }
 
         // Update document title
@@ -514,70 +730,156 @@
 
         // Force a chart redraw to ensure the coin indicator is visible if the function exists
         if (typeof drawChart === 'function') {
-            // Use setTimeout to ensure the chart redraws after all state changes are complete
-            // and after the historical data has been fetched
+            // Use a longer timeout to ensure the data is fully loaded and processed
+            // This is critical for preventing the large candle issue
             setTimeout(() => {
-                drawChart();
-            }, 50);
+                // Check if we have valid data before proceeding
+                if (bars.length === 0) {
+                    console.log('No bars data available yet, waiting longer...');
+                    // Wait a bit longer and try again
+                    setTimeout(() => {
+                        if (bars.length > 0) {
+                            console.log(`Bars data now available (${bars.length} bars), proceeding with chart update`);
+                            completeChartUpdate();
+                        } else {
+                            console.warn('Still no bars data available, forcing chart update anyway');
+                            completeChartUpdate();
+                        }
+                    }, 1000);
+                } else {
+                    completeChartUpdate();
+                }
+            }, 1000); // Increased timeout to ensure data is fully loaded
+        }
+
+        // Helper function to complete the chart update process
+        function completeChartUpdate() {
+            // If volume profile is visible, calculate it for the new coin
+            if (isVolumeProfileVisible && volumeProfileData.pricePoints.length === 0) {
+                console.log('Calculating volume profile for new coin after data fetch');
+                calculateVolumeProfile();
+            }
+
+            // Clear the coin change in progress flag
+            isCoinChangeInProgress = false;
+            console.log(`Coin change in progress flag cleared: ${isCoinChangeInProgress}`);
+
+            // Now it's safe to draw the chart
+            drawChart();
+
+            // Force an update of the sidebar if it exists
+            if (window.shortsLongsRatio && typeof window.shortsLongsRatio.updateSidebar === 'function') {
+                console.log('Forcing sidebar update after coin change');
+                window.shortsLongsRatio.updateSidebar();
+            }
         }
 
         // Unsubscribe from old WebSocket channels
         if (window.bybitWsManager) {
-            // Unsubscribe from all kline channels for all timeframes
+            // Unsubscribe from all liquidation channels for all coins
             Object.values(window.coinManager.coins).forEach(c => {
-                // Unsubscribe from all possible timeframes to be safe
-                const channels = [
-                    `kline.1.${c.bybitSymbol}`,
-                    `kline.5.${c.bybitSymbol}`,
-                    `kline.15.${c.bybitSymbol}`
-                ];
-                channels.forEach(channel => window.bybitWsManager.unsubscribe(channel));
+                const liquidationChannel = `liquidation.${c.bybitSymbol}`;
+                window.bybitWsManager.unsubscribe(liquidationChannel);
             });
 
-            // Subscribe to new kline channel with current timeframe
-            // Make sure we're using the latest timeframe value
-            const tf = window.currentTimeframe || currentTimeframe;
-            const newKlineChannel = `kline.${tf}.${coin.bybitSymbol}`;
-            console.log(`Subscribing to new Bybit channel: ${newKlineChannel}`);
-            window.bybitWsManager.subscribe(newKlineChannel, (data) => {
-                if (data.topic && data.data && data.data.length > 0) {
-                    const bar = data.data[0];
-                    const newBar = {
-                        time: parseInt(bar.start),
-                        open: parseFloat(bar.open),
-                        high: parseFloat(bar.high),
-                        low: parseFloat(bar.low),
-                        close: parseFloat(bar.close)
-                    };
-
-                    // Process the new bar as in setupWebSockets
-                    processNewBar(newBar);
+            // Subscribe to new liquidation channel
+            const newLiquidationChannel = `liquidation.${coin.bybitSymbol}`;
+            console.log(`Subscribing to new Bybit channel for liquidations: ${newLiquidationChannel}`);
+            window.bybitWsManager.subscribe(newLiquidationChannel, (data) => {
+                // Process liquidation data here if needed
+                if (data.topic && data.data) {
+                    console.log('Received liquidation data:', data);
                 }
             });
         }
 
-        // Unsubscribe from old Bitstamp orderbook channels
+        // Unsubscribe from old Bitstamp channels
         if (window.bitstampWsManager) {
-            // Unsubscribe from all orderbook channels
+            // Unsubscribe from all orderbook and live trades channels
             Object.values(window.coinManager.coins).forEach(c => {
-                const channel = `order_book_${c.bitstampSymbol}`;
-                window.bitstampWsManager.unsubscribe(channel);
+                const orderBookChannel = `order_book_${c.bitstampSymbol}`;
+                const liveTradesChannel = `live_trades_${c.bitstampSymbol}`;
+                window.bitstampWsManager.unsubscribe(orderBookChannel);
+                window.bitstampWsManager.unsubscribe(liveTradesChannel);
             });
 
             // Subscribe to new orderbook channel
             const newOrderBookChannel = `order_book_${coin.bitstampSymbol}`;
-            console.log(`Subscribing to new Bitstamp channel: ${newOrderBookChannel}`);
+            console.log(`Subscribing to new Bitstamp channel for orderbook: ${newOrderBookChannel}`);
             window.bitstampWsManager.subscribe(newOrderBookChannel, handleBitstampOrderbook);
+
+            // Subscribe to new live trades channel for candle data
+            const newLiveTradesChannel = `live_trades_${coin.bitstampSymbol}`;
+            console.log(`Subscribing to new Bitstamp channel for candle data: ${newLiveTradesChannel}`);
+
+            // Reset candle building variables
+            currentCandle = null;
+            currentCandleTime = 0;
+
+            // Make sure we're using the latest timeframe value
+            const tf = window.currentTimeframe || currentTimeframe;
+
+            window.bitstampWsManager.subscribe(newLiveTradesChannel, (data) => {
+                if (data.data && data.data.price) {
+                    const trade = data.data;
+                    const price = parseFloat(trade.price);
+                    const timestamp = parseInt(trade.timestamp) * 1000; // Convert to milliseconds
+
+                    // Calculate the start time of the candle this trade belongs to
+                    const tradeDate = new Date(timestamp);
+                    const minutes = tradeDate.getMinutes();
+                    const currentInterval = Math.floor(minutes / tf) * tf;
+                    tradeDate.setMinutes(currentInterval);
+                    tradeDate.setSeconds(0);
+                    tradeDate.setMilliseconds(0);
+                    const candleTime = tradeDate.getTime();
+
+                    // If this is a new candle or we don't have a current candle
+                    if (!currentCandle || candleTime !== currentCandleTime) {
+                        // If we have a current candle, finalize it and add it to bars
+                        if (currentCandle) {
+                            // Process the completed candle
+                            processNewBar(currentCandle);
+                        }
+
+                        // Start a new candle
+                        currentCandle = {
+                            time: candleTime,
+                            open: price,
+                            high: price,
+                            low: price,
+                            close: price
+                        };
+                        currentCandleTime = candleTime;
+                    } else {
+                        // Update the current candle with this trade
+                        currentCandle.high = Math.max(currentCandle.high, price);
+                        currentCandle.low = Math.min(currentCandle.low, price);
+                        currentCandle.close = price; // Last price becomes the close
+                    }
+
+                    // Use throttled version of drawChart for better performance
+                    throttledPriceUpdate();
+                }
+            });
         }
 
-        // Reset chart data
+        // Reset chart data - completely clear all arrays
         bars = [];
         orderbook = { bids: [], asks: [] };
 
-        // Reset price scale
+        // Also reset the unfiltered orderbook
+        if (window.unfilteredOrderbook) {
+            window.unfilteredOrderbook = { bids: [], asks: [] };
+        }
+
+        // Reset price scale - force a complete recalculation for the new coin
         isPriceScaleManuallySet = false;
         minPrice = 0;
         maxPrice = 100000;
+
+        // Log that we're completely resetting the price scale for the new coin
+        console.log(`Completely resetting price scale for ${coin.symbol}`);
 
         // Clear any existing bid/ask tags
         if (window.bidAskTags) {
@@ -598,12 +900,56 @@
     const processNewBar = function(newBar) {
         // Make this function globally accessible
         window.processNewBar = processNewBar;
+
+        // Debug logging for bar updates
+        const debugTime = new Date();
+        console.log(`[${debugTime.toISOString()}] Processing bar update:`, {
+            time: new Date(newBar.time).toISOString(),
+            open: newBar.open,
+            high: newBar.high,
+            low: newBar.low,
+            close: newBar.close
+        });
+
+        // Check if we have a latest price from the real-time updater
+        if (window.realTimeUpdater && window.realTimeUpdater.getLatestPrice) {
+            const latestPrice = window.realTimeUpdater.getLatestPrice();
+            if (latestPrice !== null) {
+                console.log(`processNewBar: Using latest price from realTimeUpdater: ${latestPrice}`);
+
+                // Always use the latest price for the close
+                newBar.close = latestPrice;
+                newBar.high = Math.max(newBar.high, latestPrice);
+                newBar.low = Math.min(newBar.low, latestPrice);
+            }
+        }
+
         // Find the index where this bar should be inserted or updated
         const existingBarIndex = bars.findIndex(b => b.time === newBar.time);
 
         if (existingBarIndex >= 0) {
             // Update existing bar
+            console.log(`Updating existing bar at index ${existingBarIndex}:`, {
+                old: {
+                    open: bars[existingBarIndex].open,
+                    high: bars[existingBarIndex].high,
+                    low: bars[existingBarIndex].low,
+                    close: bars[existingBarIndex].close
+                },
+                new: {
+                    open: newBar.open,
+                    high: newBar.high,
+                    low: newBar.low,
+                    close: newBar.close
+                }
+            });
             bars[existingBarIndex] = newBar;
+
+            // If this is the current candle, update the currentCandle reference
+            if (newBar.time === currentCandleTime) {
+                currentCandle = newBar;
+                console.log('Updated currentCandle reference');
+            }
         } else {
             // Insert new bar (maintaining chronological order)
             let insertIndex = bars.length;
@@ -613,7 +959,31 @@
                     break;
                 }
             }
+            console.log(`Adding new bar at index ${insertIndex}, time ${new Date(newBar.time).toISOString()}`);
             bars.splice(insertIndex, 0, newBar);
+
+            // If this is the current candle time, update the currentCandle reference
+            if (newBar.time === currentCandleTime) {
+                currentCandle = newBar;
+                console.log('Set currentCandle reference to new bar');
+            }
+
+            // If we're viewing the most recent bars, adjust viewOffset to keep showing the latest
+            if (viewOffset + visibleBars >= bars.length - 1) {
+                // Add padding of 10% of visible bars to ensure space between newest candle and price scale
+                const rightPadding = Math.ceil(visibleBars * 0.1);
+                // Only auto-adjust if we're not scrolled into the future area
+                if (viewOffset < bars.length - visibleBars + rightPadding) {
+                    viewOffset = Math.max(0, bars.length - visibleBars + rightPadding);
+                    console.log(`Auto-adjusted view offset to ${viewOffset}`);
+                }
+            }
+        }
+
+        // Force a chart update
+        if (window.drawChart) {
+            console.log('Forcing chart update from processNewBar');
+            window.drawChart();
         }
 
         // Determine if this is the current interval bar based on the current timeframe
@@ -637,7 +1007,12 @@
 
         // Update title and redraw chart
         updateTitle();
-        drawChart();
+
+        // Use requestAnimationFrame for smoother updates
+        requestChartUpdate();
+
+        // Update the bar countdown timer
+        updateBarCountdown();
     }
 
     // Handler for Bitstamp orderbook data
@@ -660,6 +1035,14 @@
             });
         }
 
+        // Process orderbook data for whale watcher if available
+        if (window.whaleWatcher && typeof window.whaleWatcher.processOrderbook === 'function') {
+            console.log('Sending orderbook data to whale watcher');
+            window.whaleWatcher.processOrderbook(data);
+        } else {
+            console.log('Whale watcher not available or missing processOrderbook method');
+        }
+
         // Log subscription events
         if (data.event === 'bts:subscription_succeeded') {
             console.log(`Successfully subscribed to ${currentCoin} orderbook channel`);
@@ -671,7 +1054,11 @@
             try {
                 // Get current coin symbol for logging
                 const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
-                console.log(`Processing ${currentCoin} orderbook data with ${data.data.bids.length} bids and ${data.data.asks.length} asks`);
+
+                // Performance optimization: Reduce logging frequency
+                if (Math.random() < 0.1) { // Only log 10% of updates to reduce console spam
+                    console.log(`Processing ${currentCoin} orderbook data with ${data.data.bids.length} bids and ${data.data.asks.length} asks`);
+                }
 
                 const rawBids = data.data.bids;
                 const rawAsks = data.data.asks;
@@ -681,105 +1068,110 @@
                     return;
                 }
 
-                // Store price in the appropriate variable based on current coin
-                if (window.coinManager) {
-                    const coinSymbol = window.coinManager.getCurrentCoin().symbol.toLowerCase();
-                    window[`${coinSymbol}Price`] = currentPrice;
+                // Store price in the global variable
+                window.latestPrice = currentPrice;
 
-                    // Also update the local variable
-                    if (coinSymbol === 'btc') {
-                        btcPrice = currentPrice;
-                    } else if (coinSymbol === 'eth') {
-                        ethPrice = currentPrice;
-                    } else if (coinSymbol === 'sol') {
-                        solPrice = currentPrice;
-                    } else if (coinSymbol === 'ltc') {
-                        ltcPrice = currentPrice;
-                    } else if (coinSymbol === 'xrp') {
-                        xrpPrice = currentPrice;
-                    }
-                } else {
-                    btcPrice = currentPrice; // Fallback to BTC
-                    window.btcPrice = currentPrice;
-                }
-
-                // Clear existing orderbook data
-                orderbook.bids = [];
-                orderbook.asks = [];
+                // Clear existing orderbook data for both filtered and unfiltered orderbooks
+                // Use new arrays instead of clearing existing ones to avoid potential race conditions
+                const newOrderbookBids = [];
+                const newOrderbookAsks = [];
+                const newUnfilteredOrderbookBids = [];
+                const newUnfilteredOrderbookAsks = [];
 
                 // Get minimum dollar value threshold for the current coin
-                // Use the already declared currentCoin variable
                 userMinOrderValue = window.coinMinOrderValues[currentCoin] || coinMinOrderValues[currentCoin];
                 let minDollarValue = userMinOrderValue * 1000; // Convert from k to actual USD value
 
-                // Process bids - convert to USD value based on current coin's price
-                for (let i = 0; i < rawBids.length; i++) {
-                    const order = rawBids[i];
+                // Process bids and asks in parallel using array methods for better performance
+                // Process bids
+                rawBids.forEach(order => {
                     const price = parseFloat(order[0]);
                     const size = parseFloat(order[1]);
+                    const dollarValue = price * size; // Simplified calculation
 
-                    // Calculate dollar value based on the current coin
-                    let dollarValue;
-                    if (window.coinManager) {
-                        // Use the coin's price for conversion
-                        dollarValue = price * size;
-                    } else {
-                        // Fallback to BTC calculation
-                        dollarValue = price * size;
-                    }
+                    // Add to unfiltered orderbook
+                    newUnfilteredOrderbookBids.push([price, size, dollarValue]);
 
-                    // Only add orders above the threshold
+                    // Only add orders above the threshold to filtered orderbook
                     if (dollarValue >= minDollarValue) {
-                        orderbook.bids.push([price, size, dollarValue]);
+                        newOrderbookBids.push([price, size, dollarValue]);
                     }
-                }
+                });
 
-                // Process asks - convert to USD value based on current coin's price
-                for (let i = 0; i < rawAsks.length; i++) {
-                    const order = rawAsks[i];
+                // Process asks
+                rawAsks.forEach(order => {
                     const price = parseFloat(order[0]);
                     const size = parseFloat(order[1]);
+                    const dollarValue = price * size; // Simplified calculation
 
-                    // Calculate dollar value based on the current coin
-                    let dollarValue;
-                    if (window.coinManager) {
-                        // Use the coin's price for conversion
-                        dollarValue = price * size;
-                    } else {
-                        // Fallback to BTC calculation
-                        dollarValue = price * size;
-                    }
+                    // Add to unfiltered orderbook
+                    newUnfilteredOrderbookAsks.push([price, size, dollarValue]);
 
-                    // Only add orders above the threshold
+                    // Only add orders above the threshold to filtered orderbook
                     if (dollarValue >= minDollarValue) {
-                        orderbook.asks.push([price, size, dollarValue]);
+                        newOrderbookAsks.push([price, size, dollarValue]);
                     }
-                }
+                });
 
-                // Sort bids by dollar value (descending)
-                orderbook.bids.sort((a, b) => b[2] - a[2]);
+                // Sort and limit the orderbooks
+                // Sort by dollar value (descending) and take top 20
+                newOrderbookBids.sort((a, b) => b[2] - a[2]);
+                newOrderbookAsks.sort((a, b) => b[2] - a[2]);
+                newUnfilteredOrderbookBids.sort((a, b) => b[2] - a[2]);
+                newUnfilteredOrderbookAsks.sort((a, b) => b[2] - a[2]);
 
-                // Sort asks by dollar value (descending)
-                orderbook.asks.sort((a, b) => b[2] - a[2]);
+                // Limit to top 20 entries
+                const limitedOrderbookBids = newOrderbookBids.slice(0, 20);
+                const limitedOrderbookAsks = newOrderbookAsks.slice(0, 20);
+                const limitedUnfilteredOrderbookBids = newUnfilteredOrderbookBids.slice(0, 20);
+                const limitedUnfilteredOrderbookAsks = newUnfilteredOrderbookAsks.slice(0, 20);
 
-                // Limit to top 10 bids and 10 asks by dollar value
-                orderbook.bids = orderbook.bids.slice(0, 10);
-                orderbook.asks = orderbook.asks.slice(0, 10);
+                // Sort by price for display
+                limitedOrderbookBids.sort((a, b) => b[0] - a[0]); // Descending for bids
+                limitedOrderbookAsks.sort((a, b) => a[0] - b[0]); // Ascending for asks
+                limitedUnfilteredOrderbookBids.sort((a, b) => b[0] - a[0]);
+                limitedUnfilteredOrderbookAsks.sort((a, b) => a[0] - b[0]);
 
-                // Now sort bids by price (descending) and asks by price (ascending) for display
-                orderbook.bids.sort((a, b) => b[0] - a[0]);
-                orderbook.asks.sort((a, b) => a[0] - b[0]);
+                // Update the orderbooks atomically to avoid race conditions
+                orderbook.bids = limitedOrderbookBids;
+                orderbook.asks = limitedOrderbookAsks;
+                unfilteredOrderbook.bids = limitedUnfilteredOrderbookBids;
+                unfilteredOrderbook.asks = limitedUnfilteredOrderbookAsks;
+
+                // Make sure the global unfilteredOrderbook is updated
+                window.unfilteredOrderbook = unfilteredOrderbook;
 
                 // Update the shorts vs longs ratio sidebar if it exists
                 if (window.shortsLongsRatio && typeof window.shortsLongsRatio.handleOrderbookUpdate === 'function') {
                     window.shortsLongsRatio.handleOrderbookUpdate(data);
                 }
 
-                // Log the number of filtered orders
-                console.log(`Processed orderbook: ${orderbook.bids.length} bids, ${orderbook.asks.length} asks above ${minDollarValue} USD`);
+                // Performance optimization: Reduce logging frequency
+                if (Math.random() < 0.1) { // Only log 10% of updates
+                    console.log(`Processed orderbook: ${orderbook.bids.length} bids, ${orderbook.asks.length} asks above ${minDollarValue} USD`);
+                }
+
+                // Add timestamp to track when orderbook update was received
+                const updateTimestamp = Date.now();
+                window.lastOrderbookUpdateTime = updateTimestamp;
 
                 // Use throttled version of drawChart for better performance
                 throttledDrawChart();
+
+                // Debug: Log time between orderbook update and chart redraw
+                const drawStartTime = Date.now();
+                window.lastDrawStartTime = drawStartTime;
+
+                // Add a callback to measure rendering time after the throttled draw completes
+                setTimeout(() => {
+                    if (window.lastDrawStartTime === drawStartTime) {
+                        const renderTime = Date.now() - updateTimestamp;
+                        // Only log occasionally to reduce console spam
+                        if (Math.random() < 0.05) { // 5% of updates
+                            console.log(`Orderbook render time: ${renderTime}ms (update to screen)`);
+                        }
+                    }
+                }, 100); // Check after expected throttle time
             } catch (error) {
                 console.error('Error processing orderbook data:', error);
             }
@@ -799,6 +1191,9 @@
         button.className = 'sidebar-button' + (isVwapVisible ? '' : ' inactive');
         button.id = 'vwap-toggle-button';
 
+        // Log VWAP visibility state
+        console.log('VWAP button initialized with visibility:', isVwapVisible);
+
         // Add feature icon and text
         const featureIcon = document.createElement('span');
         featureIcon.className = 'feature-icon';
@@ -808,17 +1203,31 @@
         const textNode = document.createTextNode('VWAP');
         button.appendChild(textNode);
 
+        // Set initial button appearance based on VWAP visibility
+        if (isVwapVisible) {
+            button.classList.remove('inactive');
+            console.log('VWAP button initially active');
+        } else {
+            button.classList.add('inactive');
+            console.log('VWAP button initially inactive');
+        }
+
         // Add click event listener
         button.addEventListener('click', () => {
             // Toggle VWAP visibility
             isVwapVisible = !isVwapVisible;
-            localStorage.setItem('isVwapVisible', isVwapVisible);
+            // Update global variable
+            window.isVwapVisible = isVwapVisible;
+            localStorage.setItem('isVwapVisible', isVwapVisible.toString()); // Store as string 'true' or 'false'
+            console.log('VWAP visibility toggled:', isVwapVisible);
 
             // Update button appearance
             if (isVwapVisible) {
                 button.classList.remove('inactive');
+                console.log('VWAP button active');
             } else {
                 button.classList.add('inactive');
+                console.log('VWAP button inactive');
             }
 
             // Redraw chart
@@ -835,7 +1244,303 @@
         addSidebarToggleButton();
     }
 
-    // Volume Profile toggle button removed
+    function addVolumeProfileToggleButton() {
+        // Get the top sidebar container
+        const topSidebar = document.getElementById('top-sidebar');
+        if (!topSidebar) {
+            console.error('Top sidebar not found');
+            return;
+        }
+
+        // Create a container for the volume profile button
+        const volumeProfileButtonContainer = document.createElement('div');
+        volumeProfileButtonContainer.className = 'volume-profile-button-container';
+        volumeProfileButtonContainer.style.display = 'flex';
+        volumeProfileButtonContainer.style.alignItems = 'center';
+        volumeProfileButtonContainer.style.marginLeft = '15px';
+
+        // Create the button with its own styling
+        const button = document.createElement('button');
+        button.className = isVolumeProfileVisible ? 'active' : '';
+        button.id = 'volume-profile-toggle-button';
+        // Let CSS handle the styling
+
+        // Add text to the button
+        button.textContent = 'Volume Profile';
+
+        // Add click event listener with debounce to prevent multiple rapid clicks
+        let isCalculating = false;
+        button.addEventListener('click', () => {
+            // Prevent multiple clicks while calculating
+            if (isCalculating) {
+                console.log('Volume profile calculation in progress, ignoring click');
+                return;
+            }
+
+            console.log('Volume profile button clicked');
+            // Store the current POC value before toggling
+            const previousPoc = volumeProfileData.poc;
+            const previousValueAreaHigh = volumeProfileData.valueAreaHigh;
+            const previousValueAreaLow = volumeProfileData.valueAreaLow;
+
+            // Toggle volume profile visibility
+            isVolumeProfileVisible = !isVolumeProfileVisible;
+            window.isVolumeProfileVisible = isVolumeProfileVisible;
+            localStorage.setItem('isVolumeProfileVisible', isVolumeProfileVisible.toString()); // Store as string 'true' or 'false'
+            console.log('Volume profile visibility toggled:', isVolumeProfileVisible);
+
+            // Update button appearance
+            if (isVolumeProfileVisible) {
+                // Show loading state
+                button.classList.add('active');
+                button.textContent = 'Loading...';
+                button.style.backgroundColor = '#555';
+                button.style.color = 'white';
+                isCalculating = true;
+
+                // If we have previous POC data, preserve it
+                if (previousPoc > 0) {
+                    console.log('Preserving previous POC value:', previousPoc);
+                    // Keep the POC data but recalculate the price points
+                    volumeProfileData.pricePoints = [];
+                    // We'll restore the POC after calculation
+                } else {
+                    // No previous POC, do a full recalculation
+                    console.log('No previous POC data, doing full recalculation');
+                    volumeProfileData.pricePoints = [];
+                    volumeProfileData.poc = 0;
+                    volumeProfileData.valueAreaHigh = 0;
+                    volumeProfileData.valueAreaLow = 0;
+                }
+
+                // Use setTimeout to make the calculation asynchronous
+                setTimeout(() => {
+                    try {
+                        // Calculate the volume profile
+                        calculateVolumeProfile();
+
+                        // If we had a previous POC and we're preserving it, restore it now
+                        if (previousPoc > 0) {
+                            // Check if the new POC is significantly different from the previous one
+                            const newPoc = volumeProfileData.poc;
+                            const pocDifference = Math.abs(newPoc - previousPoc) / previousPoc;
+
+                            // If the difference is less than 5%, keep the previous POC for consistency
+                            if (pocDifference < 0.05) {
+                                console.log(`New POC (${newPoc}) is close to previous POC (${previousPoc}), keeping previous for consistency`);
+                                volumeProfileData.poc = previousPoc;
+
+                                // Also restore Value Area High and Low if they're valid
+                                if (previousValueAreaHigh > 0 && previousValueAreaLow > 0) {
+                                    // Only restore if they're within a reasonable range of the new values
+                                    const vahDifference = Math.abs(volumeProfileData.valueAreaHigh - previousValueAreaHigh) / previousValueAreaHigh;
+                                    const valDifference = Math.abs(volumeProfileData.valueAreaLow - previousValueAreaLow) / previousValueAreaLow;
+
+                                    if (vahDifference < 0.05 && valDifference < 0.05) {
+                                        console.log(`Restoring previous VAH (${previousValueAreaHigh}) and VAL (${previousValueAreaLow}) for consistency`);
+                                        volumeProfileData.valueAreaHigh = previousValueAreaHigh;
+                                        volumeProfileData.valueAreaLow = previousValueAreaLow;
+                                    } else {
+                                        console.log(`New VAH/VAL too different from previous, using new values`);
+                                    }
+                                }
+                            } else {
+                                console.log(`New POC (${newPoc}) is significantly different from previous POC (${previousPoc}), using new POC`);
+                            }
+                        }
+
+                        // Update button appearance after calculation
+                        const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+                        button.style.backgroundColor = bullishColor;
+                        // Use white or black text depending on background brightness
+                        const textColor = isBrightColor(bullishColor) ? 'black' : 'white';
+                        button.style.color = textColor;
+                        button.textContent = 'Volume Profile';
+                        console.log('Volume button active: bg color =', bullishColor, 'text color =', textColor);
+
+                        // Redraw chart
+                        drawChart();
+                    } catch (error) {
+                        console.error('Error calculating volume profile:', error);
+                        // Reset button if there's an error
+                        button.classList.remove('active');
+                        button.style.backgroundColor = '#2a2e39';
+                        button.style.color = '#aaa';
+                        button.textContent = 'Volume Profile';
+                        isVolumeProfileVisible = false;
+                        window.isVolumeProfileVisible = false;
+                        localStorage.setItem('isVolumeProfileVisible', 'false');
+                    } finally {
+                        isCalculating = false;
+                    }
+                }, 50); // Small delay to allow UI to update
+            } else {
+                button.classList.remove('active');
+                // Reset to default styling
+                button.style.backgroundColor = '#2a2e39';
+                button.style.color = '#aaa';
+
+                // Redraw chart
+                drawChart();
+            }
+
+            // Make sure timeframe buttons maintain their state
+            const activeTimeframeButton = document.querySelector('.timeframe-button[data-timeframe].active');
+            if (activeTimeframeButton) {
+                const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+                activeTimeframeButton.style.backgroundColor = bullishColor;
+                const textColor = isBrightColor(bullishColor) ? 'black' : 'white';
+                activeTimeframeButton.style.color = textColor;
+            }
+        });
+
+        // No settings button - settings are accessible through the main settings menu
+
+        // Add the button to the container
+        volumeProfileButtonContainer.appendChild(button);
+
+        // Add the container to the top sidebar
+        topSidebar.appendChild(volumeProfileButtonContainer);
+    }
+
+    // Function to add coin indicator to the top bar
+    function addCoinIndicatorToTopBar() {
+        // Create a container for the coin indicator
+        const coinIndicatorContainer = document.createElement('div');
+        coinIndicatorContainer.id = 'coin-indicator-top-bar';
+
+        // Create the coin symbol element
+        const coinSymbolElement = document.createElement('div');
+        coinSymbolElement.id = 'coin-symbol-top-bar';
+        coinSymbolElement.textContent = 'BTC'; // Default value, will be updated by coin-indicator.js
+
+        // Add the coin symbol to the container
+        coinIndicatorContainer.appendChild(coinSymbolElement);
+
+        // Add the container to the top sidebar
+        const topSidebar = document.getElementById('top-sidebar');
+        if (topSidebar) {
+            // Check if we need to create a middle container for the coin indicator
+            let middleContainer = document.getElementById('top-sidebar-middle');
+            if (!middleContainer) {
+                // Create containers for left, middle, and right sections
+                const leftContainer = document.createElement('div');
+                leftContainer.id = 'top-sidebar-left';
+                leftContainer.style.display = 'flex';
+                leftContainer.style.alignItems = 'center';
+                leftContainer.style.flex = '1';
+
+                middleContainer = document.createElement('div');
+                middleContainer.id = 'top-sidebar-middle';
+                middleContainer.style.display = 'flex';
+                middleContainer.style.alignItems = 'center';
+                middleContainer.style.justifyContent = 'center';
+                middleContainer.style.flex = '1';
+
+                const rightContainer = document.createElement('div');
+                rightContainer.id = 'top-sidebar-right';
+                rightContainer.style.display = 'flex';
+                rightContainer.style.alignItems = 'center';
+                rightContainer.style.justifyContent = 'flex-end';
+                rightContainer.style.flex = '1';
+
+                // Move existing elements to appropriate containers
+                while (topSidebar.firstChild) {
+                    const child = topSidebar.firstChild;
+                    if (child.id === 'threshold-slider-container') {
+                        rightContainer.appendChild(child);
+                    } else {
+                        leftContainer.appendChild(child);
+                    }
+                }
+
+                // Add the containers to the top sidebar
+                topSidebar.appendChild(leftContainer);
+                topSidebar.appendChild(middleContainer);
+                topSidebar.appendChild(rightContainer);
+            }
+
+            // Add the coin indicator to the middle container
+            middleContainer.appendChild(coinIndicatorContainer);
+        }
+    }
+
+    function addMeasurementToolButton() {
+        // Create a container for the button
+        const measurementToolButtonContainer = document.createElement('div');
+        measurementToolButtonContainer.className = 'measurement-tool-button-container';
+        measurementToolButtonContainer.style.display = 'flex';
+        measurementToolButtonContainer.style.alignItems = 'center';
+        measurementToolButtonContainer.style.marginLeft = '15px';
+
+        // Create the button with its own styling
+        const button = document.createElement('button');
+        button.className = isMeasurementToolActive ? 'active' : '';
+        button.id = 'measurement-tool-toggle-button';
+        // Let CSS handle the styling
+
+        // Add text to the button
+        button.textContent = 'Measure';
+
+        // Add debug click handler to verify button is receiving clicks
+        button.addEventListener('click', (event) => {
+            console.log('Measure button clicked!', event);
+
+            // Toggle measurement tool active state
+            isMeasurementToolActive = !isMeasurementToolActive;
+            localStorage.setItem('isMeasurementToolActive', isMeasurementToolActive);
+            console.log('Measurement tool active state:', isMeasurementToolActive);
+
+            // Update button appearance
+            if (isMeasurementToolActive) {
+                button.classList.add('active');
+                // Set background color to bullish candle color
+                const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+                button.style.backgroundColor = bullishColor;
+                // Set text color based on background brightness
+                const textColor = isBrightColor(bullishColor) ? 'black' : 'white';
+                button.style.color = textColor;
+                console.log('Measurement button active: bg color =', bullishColor, 'text color =', textColor);
+                // Don't set canvas cursor here - it will be set in drawChart
+            } else {
+                button.classList.remove('active');
+                // Reset to default styling
+                button.style.backgroundColor = '#2a2e39';
+                button.style.color = '#aaa';
+                // Don't set canvas cursor here - it will be set in drawChart
+                // Clear any active measurement
+                isMeasuring = false;
+                window.measurementInitiated = false;
+                measurementStart = null;
+                measurementEnd = null;
+                if (window.measurementClearTimeout) {
+                    clearTimeout(window.measurementClearTimeout);
+                    window.measurementClearTimeout = null;
+                }
+            }
+
+            // Redraw chart
+            drawChart();
+
+            // Make sure timeframe buttons maintain their state
+            const activeTimeframeButton = document.querySelector('.timeframe-button[data-timeframe].active');
+            if (activeTimeframeButton) {
+                const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+                activeTimeframeButton.style.backgroundColor = bullishColor;
+                const textColor = isBrightColor(bullishColor) ? 'black' : 'white';
+                activeTimeframeButton.style.color = textColor;
+            }
+        });
+
+        // Add the button to the container
+        measurementToolButtonContainer.appendChild(button);
+
+        // Add the container to the top sidebar
+        const topSidebar = document.getElementById('top-sidebar');
+        if (topSidebar) {
+            topSidebar.appendChild(measurementToolButtonContainer);
+        }
+    }
 
     function addBidAskStrengthToggleButton() {
         // Get the sidebar buttons container
@@ -878,6 +1583,93 @@
 
         // Add the button to the sidebar buttons container
         buttonsContainer.appendChild(button);
+
+        // Add line drawing toggle button
+        addLineDrawingToggleButton();
+
+        // Add volume profile toggle button
+        addVolumeProfileToggleButton();
+
+        // Add measurement tool toggle button
+        addMeasurementToolButton();
+
+        // Add coin indicator to top bar - after the measurement tool button
+        // This ensures it appears to the right of the measure button
+        addCoinIndicatorToTopBar();
+    }
+
+    function addLineDrawingToggleButton() {
+        // Get the top sidebar container
+        const topSidebar = document.getElementById('top-sidebar');
+        if (!topSidebar) {
+            console.error('Top sidebar not found');
+            return;
+        }
+
+        // Create a container for the line drawing button
+        const lineButtonContainer = document.createElement('div');
+        lineButtonContainer.className = 'line-drawing-button-container';
+        lineButtonContainer.style.display = 'flex';
+        lineButtonContainer.style.alignItems = 'center';
+        lineButtonContainer.style.marginLeft = '15px';
+
+        // Create the button with its own styling
+        const button = document.createElement('button');
+        button.className = isLineDrawingMode ? 'active' : '';
+        button.id = 'line-drawing-toggle-button';
+        // Let CSS handle the styling
+
+        // Add text to the button
+        button.textContent = 'Draw';
+
+        // Add click event listener
+        button.addEventListener('click', () => {
+            // Toggle line drawing mode
+            isLineDrawingMode = !isLineDrawingMode;
+            window.isLineDrawingMode = isLineDrawingMode;
+            localStorage.setItem('isLineDrawingMode', isLineDrawingMode);
+
+            // Update button appearance
+            if (isLineDrawingMode) {
+                button.classList.add('active');
+                // Set background color to bullish candle color
+                const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+                button.style.backgroundColor = bullishColor;
+                // Set text color based on background brightness
+                const textColor = isBrightColor(bullishColor) ? 'black' : 'white';
+                button.style.color = textColor;
+                console.log('Draw button active: bg color =', bullishColor, 'text color =', textColor);
+                canvas.style.cursor = 'crosshair';
+            } else {
+                button.classList.remove('active');
+                // Reset to default styling
+                button.style.backgroundColor = '#2a2e39';
+                button.style.color = '#aaa';
+                canvas.style.cursor = 'default';
+                // Cancel any in-progress line drawing
+                isDrawingLine = false;
+                currentLine = null;
+            }
+
+            // Redraw chart
+            drawChart();
+
+            // Make sure timeframe buttons maintain their state
+            const activeTimeframeButton = document.querySelector('.timeframe-button[data-timeframe].active');
+            if (activeTimeframeButton) {
+                const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+                activeTimeframeButton.style.backgroundColor = bullishColor;
+                const textColor = isBrightColor(bullishColor) ? 'black' : 'white';
+                activeTimeframeButton.style.color = textColor;
+            }
+        });
+
+        // Add the button to the container
+        lineButtonContainer.appendChild(button);
+
+        // Simply add the button to the top sidebar
+        // The CSS order property will ensure it's positioned correctly
+        topSidebar.appendChild(lineButtonContainer);
     }
 
     function addSidebarToggleButton() {
@@ -955,6 +1747,11 @@
 
             // Resize canvas to adjust for sidebar visibility change
             resizeCanvas();
+
+            // Dispatch a custom event to notify other components about sidebar toggle
+            document.dispatchEvent(new CustomEvent('sidebarToggled'));
+
+            // Center elements no longer need to be updated
         };
 
         // Add hover effect to arrow button
@@ -997,9 +1794,6 @@
         // Add color customizer button
         addColorCustomizerButton();
 
-        // Add "made by lost" text above the buttons
-        addMadeByText();
-
         // Store the arrow button in a global variable for access from other scripts
         window.sidebarArrowButton = arrowButton;
 
@@ -1029,24 +1823,11 @@
         // We don't need to do anything here
     }
 
-    function addMadeByText() {
-        // Create the text element with styling
-        const madeByText = document.createElement('div');
-        madeByText.innerHTML = '<span style="opacity: 0.7;">made by</span> <span style="font-weight: 600;">lost</span>';
-        madeByText.style.fontSize = '10px';
-        madeByText.style.color = 'rgba(255, 255, 255, 0.6)';
-        madeByText.style.textAlign = 'center';
-        madeByText.style.position = 'absolute';
-        madeByText.style.top = '55px'; // Position it below the coin indicator
-        madeByText.style.left = '50%';
-        madeByText.style.transform = 'translateX(-50%)';
-        madeByText.style.letterSpacing = '0.5px';
-        madeByText.style.zIndex = '1000'; // Same z-index as coin indicator
-        madeByText.style.textShadow = '0 1px 2px rgba(0, 0, 0, 0.8)'; // Add shadow for better visibility
+    // Removed updateCenterElements function as it's no longer needed
 
-        // Add the text to the container
-        document.getElementById('container').appendChild(madeByText);
-    }
+    // Function to update the coin symbol - removed as we now only use the top bar indicator
+
+    // Removed addMadeByText function as it's no longer needed
 
     // updateVwapButtonAppearance function removed - now handled by DOM utilities
 
@@ -1054,99 +1835,291 @@
     function fetchHistoricalData() {
         // Make this function globally accessible
         window.fetchHistoricalData = fetchHistoricalData;
+
         // Get current trading pair from coin manager
+        let bitstampSymbol;
         if (window.coinManager) {
-            currentPair = window.coinManager.getCurrentCoin().bybitSymbol;
+            currentPair = window.coinManager.getCurrentCoin().bybitSymbol; // Keep for reference
+            bitstampSymbol = window.coinManager.getCurrentCoin().bitstampSymbol;
+        } else {
+            bitstampSymbol = 'btcusd'; // Default fallback
         }
+
+        // Ensure we completely reset the bars array when fetching historical data for a new coin
+        // This prevents any old data from the previous coin from persisting
+        bars = [];
 
         // Make sure we're using the latest timeframe value
         const tf = window.currentTimeframe || currentTimeframe;
-        console.log(`Fetching historical data for ${currentPair} with ${tf}m timeframe`);
+        // Convert timeframe to seconds for Bitstamp API
+        const tfSeconds = tf * 60;
 
         // Get the current coin symbol for logging
         const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
-        console.log(`Fetching historical data for ${currentCoin} (${currentPair})`);
+        console.log(`Fetching historical data for ${currentCoin} (${bitstampSymbol}) from Bitstamp with ${tf}m timeframe`);
 
-        fetch(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${currentPair}&interval=${tf}&limit=750`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.retCode === 0 && data.result && data.result.list) {
-                    // Parse and validate historical bars
-                    const now = Date.now();
-                    bars = data.result.list
-                        .map(bar => ({
-                            time: parseInt(bar[0]),
-                            open: parseFloat(bar[1]),
-                            high: parseFloat(bar[2]),
-                            low: parseFloat(bar[3]),
-                            close: parseFloat(bar[4])
-                        }))
-                        // Filter out any bars with invalid timestamps (future bars or invalid data)
-                        .filter(bar => {
-                            // Ensure the bar time is valid (not in the future, has reasonable values)
-                            if (bar.time > now || isNaN(bar.time) || bar.time <= 0) {
-                                console.log(`Filtering out invalid historical bar: ${new Date(bar.time).toLocaleString()}`);
-                                return false;
+        // Calculate timestamps for fetching data in chunks
+        // Bitstamp has a limit of 1000 bars per request, so we'll fetch in chunks
+        const now = Math.floor(Date.now() / 1000); // Current time in seconds
+        const barsNeeded = 2000; // We want 2000 bars total
+        const chunkSize = 1000; // Bitstamp's limit per request
+        const timePerBar = tf * 60; // Time per bar in seconds
+        const totalTimeNeeded = timePerBar * barsNeeded; // Total time range in seconds
+        const startTime = now - totalTimeNeeded; // Start time in seconds
+
+        // We don't need this array since we're using processedBars
+        // let allBars = [];
+
+        // Function to fetch a chunk of data
+        const fetchChunk = (start, end, limit) => {
+            const url = `https://www.bitstamp.net/api/v2/ohlc/${bitstampSymbol}/`;
+            const params = new URLSearchParams({
+                step: tfSeconds,
+                limit: limit,
+                start: start,
+                end: end
+            });
+
+            return fetch(`${url}?${params.toString()}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data && data.data && data.data.ohlc) {
+                        return data.data.ohlc;
+                    } else {
+                        console.error(`Invalid response from Bitstamp for ${currentCoin}:`, data);
+                        return [];
+                    }
+                })
+                .catch(error => {
+                    console.error(`Fetch error from Bitstamp for ${currentCoin}:`, error);
+                    return [];
+                });
+        };
+
+        // Fetch data in two chunks to ensure we get enough bars
+        const chunk1End = now;
+        const chunk1Start = now - (totalTimeNeeded / 2);
+        const chunk2End = chunk1Start;
+        const chunk2Start = startTime;
+
+        // First fetch the more recent chunk
+        fetchChunk(chunk1Start, chunk1End, chunkSize)
+            .then(chunk1Bars => {
+                // Then fetch the older chunk
+                return fetchChunk(chunk2Start, chunk2End, chunkSize)
+                    .then(chunk2Bars => {
+                        // Combine the chunks
+                        const combinedBars = [...chunk2Bars, ...chunk1Bars];
+
+                        // Process the bars
+                        if (combinedBars.length > 0) {
+                            // Parse and validate historical bars
+                            // Make sure we start with a clean array
+                            bars = [];
+
+                            // Get current coin for validation
+                            const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+                            console.log(`Processing historical data for ${currentCoin}`);
+
+                            // Process the bars and add them to the bars array
+                            const processedBars = combinedBars
+                                .map(bar => {
+                                    // Parse values
+                                    const time = parseInt(bar.timestamp) * 1000; // Convert to milliseconds
+                                    const open = parseFloat(bar.open);
+                                    const high = parseFloat(bar.high);
+                                    const low = parseFloat(bar.low);
+                                    const close = parseFloat(bar.close);
+                                    const volume = parseFloat(bar.volume);
+
+                                    // Validate values - ensure they're all valid numbers
+                                    if (isNaN(time) || isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close) || isNaN(volume)) {
+                                        console.log(`Skipping invalid bar data: ${JSON.stringify(bar)}`);
+                                        return null;
+                                    }
+
+                                    return {
+                                        time,
+                                        open,
+                                        high,
+                                        low,
+                                        close,
+                                        volume
+                                    };
+                                })
+                                // Filter out any null values from invalid bars
+                                .filter(bar => bar !== null)
+                                // Filter out any bars with invalid timestamps or data
+                                .filter(bar => {
+                                    const nowMs = Date.now();
+                                    // Ensure the bar time is valid
+                                    if (bar.time > nowMs || isNaN(bar.time) || bar.time <= 0) {
+                                        console.log(`Filtering out invalid historical bar: ${new Date(bar.time).toLocaleString()}`);
+                                        return false;
+                                    }
+                                    // Ensure price data is valid
+                                    if (isNaN(bar.open) || isNaN(bar.high) || isNaN(bar.low) || isNaN(bar.close)) {
+                                        console.log(`Filtering out bar with invalid price data: ${new Date(bar.time).toLocaleString()}`);
+                                        return false;
+                                    }
+
+                                    // Ensure price data is reasonable (not extreme outliers)
+                                    // This helps prevent the large candle issue when switching coins
+                                    const prices = [bar.open, bar.high, bar.low, bar.close];
+                                    const maxPrice = Math.max(...prices);
+                                    const minPrice = Math.min(...prices);
+
+                                    // If the high/low ratio is too extreme, filter it out
+                                    if (maxPrice / minPrice > 1.5) { // 50% difference within a single candle is suspicious
+                                        console.log(`Filtering out bar with suspicious price range: ${new Date(bar.time).toLocaleString()} - Range: ${minPrice} to ${maxPrice}`);
+                                        return false;
+                                    }
+
+                                    // Ensure the bar aligns with the current timeframe intervals
+                                    const barDate = new Date(bar.time);
+                                    const barMinutes = barDate.getMinutes();
+                                    // Make sure we're using the latest timeframe value
+                                    if (barMinutes % tf !== 0) {
+                                        console.log(`Filtering out bar not aligned with ${tf}-minute intervals: ${barDate.toLocaleString()}`);
+                                        return false;
+                                    }
+
+                                    return true;
+                                })
+                                // Remove duplicates (by timestamp)
+                                .filter((bar, index, self) =>
+                                    index === self.findIndex(b => b.time === bar.time)
+                                )
+                                // Sort by time (oldest first for correct chart display)
+                                .sort((a, b) => a.time - b.time);
+
+                            // Assign the processed bars to the global bars array
+                            bars = processedBars;
+
+                            // Log the price range of the new bars for debugging
+                            if (bars.length > 0) {
+                                const prices = bars.flatMap(bar => [bar.open, bar.high, bar.low, bar.close]);
+                                const minBarPrice = Math.min(...prices);
+                                const maxBarPrice = Math.max(...prices);
+                                console.log(`Price range for ${currentCoin}: ${minBarPrice} to ${maxBarPrice}`);
+
+                                // Validate the price range - if it's too large, something might be wrong
+                                const priceRatio = maxBarPrice / minBarPrice;
+                                if (priceRatio > 1.5) { // Lower threshold to catch more potential issues
+                                    console.warn(`Unusually large price range detected: ratio ${priceRatio.toFixed(2)}. This might indicate data issues.`);
+
+                                    // Try to fix the issue by filtering out extreme outliers
+                                    console.log('Attempting to fix price range by filtering out extreme outliers...');
+
+                                    // Calculate median price to use as reference
+                                    const allPrices = bars.flatMap(bar => [bar.open, bar.high, bar.low, bar.close]);
+                                    allPrices.sort((a, b) => a - b);
+                                    const medianPrice = allPrices[Math.floor(allPrices.length / 2)];
+
+                                    console.log(`Median price for ${currentCoin}: ${medianPrice}`);
+
+                                    // Filter out bars with prices that deviate too much from the median
+                                    const filteredBars = bars.filter(bar => {
+                                        const barPrices = [bar.open, bar.high, bar.low, bar.close];
+                                        const maxBarPrice = Math.max(...barPrices);
+                                        const minBarPrice = Math.min(...barPrices);
+
+                                        // Check if any price is too far from the median
+                                        const maxDeviation = maxBarPrice / medianPrice;
+                                        const minDeviation = medianPrice / minBarPrice;
+
+                                        // Use a stricter threshold for filtering
+                                        if (maxDeviation > 1.3 || minDeviation > 1.3) {
+                                            console.log(`Filtering out outlier bar at ${new Date(bar.time).toLocaleString()} - prices too far from median (max: ${maxBarPrice}, min: ${minBarPrice}, median: ${medianPrice})`);
+                                            return false;
+                                        }
+                                        return true;
+                                    });
+
+                                    // Only apply the filter if we still have enough bars
+                                    if (filteredBars.length > bars.length * 0.7) { // Keep at least 70% of bars
+                                        console.log(`Applied outlier filter: reduced from ${bars.length} to ${filteredBars.length} bars`);
+                                        bars = filteredBars;
+
+                                        // Recalculate price range
+                                        const newPrices = bars.flatMap(bar => [bar.open, bar.high, bar.low, bar.close]);
+                                        const newMinBarPrice = Math.min(...newPrices);
+                                        const newMaxBarPrice = Math.max(...newPrices);
+                                        console.log(`New price range after filtering: ${newMinBarPrice} to ${newMaxBarPrice}`);
+
+                                        // Set the price scale based on the filtered data
+                                        const pricePadding = (newMaxBarPrice - newMinBarPrice) * 0.1;
+                                        minPrice = newMinBarPrice - pricePadding;
+                                        maxPrice = newMaxBarPrice + pricePadding;
+                                        console.log(`Setting price scale based on filtered data: ${minPrice} to ${maxPrice}`);
+                                    } else {
+                                        console.warn(`Not enough bars would remain after filtering (${filteredBars.length}/${bars.length}). Using original data.`);
+                                    }
+                                }
                             }
-                            // Ensure price data is valid
-                            if (isNaN(bar.open) || isNaN(bar.high) || isNaN(bar.low) || isNaN(bar.close)) {
-                                console.log(`Filtering out bar with invalid price data: ${new Date(bar.time).toLocaleString()}`);
-                                return false;
+
+                            // Set view to show the most recent bars with padding on the right
+                            // Add padding of 10% of visible bars to ensure space between newest candle and price scale
+                            const rightPadding1 = Math.ceil(visibleBars * 0.1);
+                            viewOffset = Math.max(0, bars.length - visibleBars + rightPadding1);
+
+                            console.log(`Processed ${bars.length} historical bars from Bitstamp for ${currentCoin}`);
+
+                            // Initialize VWAP with historical bars
+                            initializeVwapPeriod();
+                            bars.forEach(bar => {
+                                if (isInCurrentVwapPeriod(bar.time)) {
+                                    // Historical bars are considered closed
+                                    updateVwap(bar, true);
+                                }
+                            });
+
+                            // Set view to show the most recent bars with padding on the right
+                            // Add padding of 10% of visible bars to ensure space between newest candle and price scale
+                            const rightPadding2 = Math.ceil(visibleBars * 0.1);
+                            viewOffset = Math.max(0, bars.length - visibleBars + rightPadding2);
+
+                            // Force price scale recalculation
+                            isPriceScaleManuallySet = false;
+
+                            // Calculate appropriate price range based on the actual data
+                            if (bars.length > 0) {
+                                const prices = bars.flatMap(bar => [bar.open, bar.high, bar.low, bar.close]);
+                                const minBarPrice = Math.min(...prices);
+                                const maxBarPrice = Math.max(...prices);
+                                const pricePadding = (maxBarPrice - minBarPrice) * 0.1; // 10% padding
+
+                                minPrice = minBarPrice - pricePadding;
+                                maxPrice = maxBarPrice + pricePadding;
+
+                                console.log(`Setting price scale for ${currentCoin} based on data: ${minPrice} to ${maxPrice}`);
+                            } else {
+                                // Fallback if no bars
+                                minPrice = 0;
+                                maxPrice = 100000; // Force recalculation based on visible bars
                             }
 
-                            // Ensure the bar aligns with the current timeframe intervals
-                            const barDate = new Date(bar.time);
-                            const barMinutes = barDate.getMinutes();
-                            // Make sure we're using the latest timeframe value
-                            const tf = window.currentTimeframe || currentTimeframe;
-                            if (barMinutes % tf !== 0) {
-                                console.log(`Filtering out bar not aligned with ${tf}-minute intervals: ${barDate.toLocaleString()}`);
-                                return false;
-                            }
+                            // Update title with current price
+                            updateTitle();
 
-                            return true;
-                        })
-                        .reverse();
-
-                    console.log(`Received ${bars.length} valid bars for ${currentCoin}`);
-
-                    // Initialize VWAP with historical bars
-                    initializeVwapPeriod();
-                    bars.forEach(bar => {
-                        if (isInCurrentVwapPeriod(bar.time)) {
-                            // Historical bars are considered closed
-                            updateVwap(bar, true);
+                            // Draw chart with the new data
+                            console.log(`Drawing chart for ${currentCoin} with ${bars.length} bars`);
+                            drawChart();
+                        } else {
+                            console.error(`No historical data returned from Bitstamp for ${currentCoin}`);
+                            drawChart();
                         }
                     });
-
-                    // Set view to show the most recent bars
-                    viewOffset = Math.max(0, bars.length - visibleBars);
-
-                    // Force price scale recalculation
-                    isPriceScaleManuallySet = false;
-                    minPrice = 0;
-                    maxPrice = 100000; // Force recalculation based on visible bars
-
-                    // Update title with current price
-                    updateTitle();
-
-                    // Draw chart with the new data
-                    console.log(`Drawing chart for ${currentCoin} with ${bars.length} bars`);
-                    drawChart();
-                } else {
-                    console.error(`Historical fetch failed for ${currentCoin}:`, data.retMsg || 'Unknown error');
-                    drawChart();
-                }
             })
             .catch(error => {
-                console.error(`Fetch error (Historical) for ${currentCoin}:`, error);
+                console.error(`Error fetching historical data from Bitstamp for ${currentCoin}:`, error);
                 drawChart();
             });
     }
 
-    // Create throttled versions of drawChart for different update types
-    let throttledDrawChart = throttle(drawChart, 100); // For orderbook updates
-    let throttledPriceUpdate = throttle(drawChart, 50); // For price updates
+    // Use requestAnimationFrame for smoother updates instead of throttled functions
+    let throttledDrawChart = () => requestChartUpdate();
+    let throttledPriceUpdate = () => requestChartUpdate();
 
     // --- WebSocket Subscriptions ---
     function setupWebSockets() {
@@ -1170,35 +2143,189 @@
             handleCoinChange(e.detail.coin);
         });
 
-        // Subscribe to the current pair's kline channel with the current timeframe
+        // Subscribe to Bitstamp for candle data
+        // Get the current coin's Bitstamp symbol
+        let bitstampSymbol;
+        if (window.coinManager) {
+            bitstampSymbol = window.coinManager.getCurrentCoin().bitstampSymbol;
+        } else {
+            bitstampSymbol = 'btcusd'; // Default fallback
+        }
+
         // Make sure we're using the latest timeframe value
         const tf = window.currentTimeframe || currentTimeframe;
-        const klineChannel = `kline.${tf}.${currentPair}`;
-        console.log(`Subscribing to Bybit channel: ${klineChannel}`);
 
-        bybitWsManager.subscribe(klineChannel, (data) => {
+        // Subscribe to Bitstamp live trades to build our own candles
+        const liveTradesChannel = `live_trades_${bitstampSymbol}`;
+        console.log(`Subscribing to Bitstamp channel for candle data: ${liveTradesChannel}`);
+
+        // Using global variables for tracking the current candle being built
+
+        // Create a global function to handle Bitstamp trades that can be called from anywhere
+        window.handleBitstampTrade = function(trade, isManualUpdate = false) {
+            const price = parseFloat(trade.price);
+            const amount = parseFloat(trade.amount || '0');
+            const timestamp = parseInt(trade.timestamp) * 1000; // Convert to milliseconds
+            const type = trade.type === '0' ? 'buy' : 'sell'; // 0 = buy, 1 = sell
+
+            // Debug logging for trade data
+            console.log(`Trade processed: price=${price}, amount=${amount}, type=${type}, time=${new Date(timestamp).toISOString()}, manual=${isManualUpdate}`);
+
+            // Update the DOM directly with the latest price
+            document.title = `${price.toFixed(2)} | Orderbook`;
+
+            // Store the latest price in a global variable for easy access
+            window.latestPrice = price;
+
+            // Process trade for whale watcher if available
+            if (window.whaleWatcher && typeof window.whaleWatcher.processTrade === 'function') {
+                const tradeValue = price * amount;
+                console.log(`Sending trade to whale watcher: ${type} $${tradeValue.toLocaleString()} (${price} × ${amount}) at ${new Date(timestamp).toISOString()}`);
+                window.whaleWatcher.processTrade({
+                    price: price,
+                    amount: amount,
+                    value: tradeValue,
+                    type: type,
+                    timestamp: timestamp
+                });
+            }
+        };
+
+        bitstampWsManager.subscribe(liveTradesChannel, (data) => {
             // Log first successful data reception
-            if (!window.bybitConnected && data.topic && data.data) {
-                console.log('✅ Bybit WebSocket connected and receiving data');
-                window.bybitConnected = true;
-                // Connection notification removed from chart display
+            if (!window.bitstampTradesConnected && data.data) {
+                console.log('✅ Bitstamp WebSocket connected and receiving trade data');
+                window.bitstampTradesConnected = true;
             }
 
-            if (data.topic && data.data && data.data.length > 0) {
-                const bar = data.data[0];
-                const newBar = {
-                    time: parseInt(bar.start),
-                    open: parseFloat(bar.open),
-                    high: parseFloat(bar.high),
-                    low: parseFloat(bar.low),
-                    close: parseFloat(bar.close)
-                };
+            // Debug logging for all received messages
+            const now = new Date();
+            console.log(`[${now.toISOString()}] Bitstamp message received:`, {
+                event: data.event,
+                channel: data.channel,
+                hasData: !!data.data
+            });
 
-                // Process the new bar using our helper function
-                processNewBar(newBar);
+            if (data.data && data.data.price) {
+                // Process the trade using our global handler
+                window.handleBitstampTrade(data.data);
 
-                // Use throttled version of drawChart for better performance
-                throttledPriceUpdate();
+                const trade = data.data;
+                const price = parseFloat(trade.price);
+                const timestamp = parseInt(trade.timestamp) * 1000; // Convert to milliseconds
+
+                // Calculate the start time of the candle this trade belongs to
+                const tradeDate = new Date(timestamp);
+                const minutes = tradeDate.getMinutes();
+                const currentInterval = Math.floor(minutes / tf) * tf;
+                tradeDate.setMinutes(currentInterval);
+                tradeDate.setSeconds(0);
+                tradeDate.setMilliseconds(0);
+                const candleTime = tradeDate.getTime();
+
+                console.log(`Calculated candle time: ${new Date(candleTime).toISOString()}, current interval: ${currentInterval}`);
+
+                // If this is a new candle or we don't have a current candle
+                if (!currentCandle || candleTime !== currentCandleTime) {
+                    // If we have a current candle, finalize it and add it to bars
+                    if (currentCandle) {
+                        console.log(`Finalizing current candle at ${new Date(currentCandleTime).toISOString()}:`, currentCandle);
+                        // Process the completed candle
+                        processNewBar(currentCandle);
+                    }
+
+                    // Start a new candle
+                    currentCandle = {
+                        time: candleTime,
+                        open: price,
+                        high: price,
+                        low: price,
+                        close: price
+                    };
+                    currentCandleTime = candleTime;
+                    console.log(`Started new candle at ${new Date(candleTime).toISOString()}:`, currentCandle);
+
+                    // Add the new candle to the bars array
+                    const existingIndex = bars.findIndex(b => b.time === candleTime);
+                    if (existingIndex !== -1) {
+                        // Replace existing bar
+                        bars[existingIndex] = { ...currentCandle };
+                        console.log(`Replaced existing bar at index ${existingIndex} with new candle`);
+                    } else {
+                        // Add new bar
+                        bars.push({ ...currentCandle });
+                        // Sort bars by time (ascending)
+                        bars.sort((a, b) => a.time - b.time);
+                        console.log(`Added new candle to bars array, now has ${bars.length} bars`);
+                    }
+                } else {
+                    // Update the current candle with this trade
+                    const oldHigh = currentCandle.high;
+                    const oldLow = currentCandle.low;
+                    const oldClose = currentCandle.close;
+
+                    currentCandle.high = Math.max(currentCandle.high, price);
+                    currentCandle.low = Math.min(currentCandle.low, price);
+                    currentCandle.close = price; // Last price becomes the close
+
+                    // Find the current candle in the bars array and update it directly
+                    const currentBarIndex = bars.findIndex(b => b.time === currentCandle.time);
+                    if (currentBarIndex !== -1) {
+                        // Update the bar in the array
+                        bars[currentBarIndex] = { ...currentCandle };
+                        console.log(`Updated bar at index ${currentBarIndex} in bars array`);
+                    } else {
+                        // If the current candle isn't in the bars array yet, add it
+                        bars.push({ ...currentCandle });
+                        // Sort bars by time (ascending)
+                        bars.sort((a, b) => a.time - b.time);
+                        console.log(`Added current candle to bars array, now has ${bars.length} bars`);
+                    }
+
+                    // Only log if values actually changed
+                    if (oldHigh !== currentCandle.high || oldLow !== currentCandle.low || oldClose !== currentCandle.close) {
+                        console.log(`Updated current candle at ${new Date(candleTime).toISOString()}:`, {
+                            changes: {
+                                high: oldHigh !== currentCandle.high ? `${oldHigh} -> ${currentCandle.high}` : 'unchanged',
+                                low: oldLow !== currentCandle.low ? `${oldLow} -> ${currentCandle.low}` : 'unchanged',
+                                close: oldClose !== currentCandle.close ? `${oldClose} -> ${currentCandle.close}` : 'unchanged'
+                            }
+                        });
+                    }
+                }
+
+                // Force a chart update to ensure the latest data is displayed
+                // Use a direct call to drawChart for immediate update
+                drawChart();
+
+                // Also schedule an animation frame update for smoother rendering
+                requestChartUpdate(true);
+
+                // Update the title with the latest price
+                updateTitle();
+
+                // Force a DOM update by triggering a custom event
+                document.dispatchEvent(new CustomEvent('priceUpdated', {
+                    detail: { price: price, time: new Date().toISOString() }
+                }));
+            }
+        });
+
+        // Subscribe to Bybit only for liquidations
+        const liquidationsChannel = `liquidation.${currentPair}`;
+        console.log(`Subscribing to Bybit channel for liquidations: ${liquidationsChannel}`);
+
+        bybitWsManager.subscribe(liquidationsChannel, (data) => {
+            // Log first successful data reception
+            if (!window.bybitConnected && data.topic) {
+                console.log('✅ Bybit WebSocket connected and receiving liquidation data');
+                window.bybitConnected = true;
+            }
+
+            // Process liquidation data here if needed
+            if (data.topic && data.data) {
+                // Handle liquidation data
+                console.log('Received liquidation data:', data);
             }
         });
 
@@ -1227,13 +2354,19 @@
         mouseX = e.clientX - rect.left;
         mouseY = e.clientY - rect.top;
 
+        // Reset mouse movement tracking
+        mouseDownStartTime = Date.now();
+        mouseHasMoved = false;
+
         // Calculate histogram area
         const chartHeight = canvas.height - timeScaleHeight - histogramHeight - histogramPaneGap;
-        const histogramY = chartHeight;
-        const histogramWidth = canvas.width - priceScaleWidth;
 
-        // Calculate histogram bottom boundary
+        // Histogram area
+        const histogramY = chartHeight;
         const histogramBottom = histogramY + histogramHeight;
+
+        const fullWidth = canvas.width - priceScaleWidth;
+        const histogramWidth = fullWidth / 2; // Half width for side-by-side display
 
         // Log chart dimensions for debugging
         console.log('Chart dimensions:', {
@@ -1245,8 +2378,107 @@
 
         console.log('Mouse down at:', { mouseX, mouseY, canvasWidth: canvas.width, priceScaleWidth });
 
+        // Check if Shift key is pressed or measurement tool is active
+        if ((e.shiftKey || isMeasurementToolActive) && mouseX < canvas.width - priceScaleWidth && mouseY < chartHeight) {
+            // Start measuring
+            isMeasuring = true;
+            measurementStart = {
+                x: mouseX,
+                y: mouseY,
+                price: hoveredPrice,
+                barIndex: viewOffset + (mouseX / barWidth)
+            };
+            measurementEnd = { ...measurementStart }; // Initialize end with start
+            canvas.classList.add('cursor-plus');
+
+            // Store that measurement was initiated
+            // This allows the user to release Shift while still measuring
+            window.measurementInitiated = true;
+            console.log('Measurement initiated:', window.measurementInitiated);
+
+            return; // Exit early to prevent other mouse interactions
+        }
+
+        // Check if clicking on a line endpoint
+        if (hoveredLine && hoveredEndpoint) {
+            // Start dragging the endpoint
+            isDraggingEndpoint = true;
+            isDrawingLine = true;
+
+            // Reset double-click timer to prevent accidental deletion
+            window.lastClickTime = 0;
+
+            const line = hoveredLine.line;
+
+            if (hoveredEndpoint === 'start') {
+                // Dragging the start point - keep the end point fixed
+                currentLine = {
+                    startX: mouseX,
+                    startY: mouseY,
+                    endX: hoveredLine.endX,
+                    endY: hoveredLine.endY,
+                    startPrice: hoveredPrice,
+                    endPrice: line.endPrice,
+                    endBarIndex: line.endBarIndex,
+                    isDraggingEndpoint: true,
+                    draggedEndpoint: 'start',
+                    originalIndex: hoveredLine.index
+                };
+            } else { // 'end'
+                // Dragging the end point - keep the start point fixed
+                currentLine = {
+                    startX: hoveredLine.startX,
+                    startY: hoveredLine.startY,
+                    endX: mouseX,
+                    endY: mouseY,
+                    startPrice: line.startPrice,
+                    endPrice: hoveredPrice,
+                    startBarIndex: line.startBarIndex,
+                    isDraggingEndpoint: true,
+                    draggedEndpoint: 'end',
+                    originalIndex: hoveredLine.index
+                };
+            }
+            return;
+        }
+
+        // Check if double-clicking on a line (for deletion)
+        if (hoveredLine && !hoveredEndpoint) {
+            // Delete the line on double-click
+            const now = Date.now();
+            if (!window.lastClickTime || now - window.lastClickTime < 300) { // 300ms for double-click detection
+                // Set a flag to delete on mouse up only if the mouse doesn't move
+                window.pendingLineDelete = hoveredLine.index;
+                window.lastClickTime = 0; // Reset to prevent triple-click
+                return;
+            }
+            window.lastClickTime = now;
+        }
+
+        // Handle line drawing mode
+        if (isLineDrawingMode && mouseX < canvas.width - priceScaleWidth && mouseY < chartHeight) {
+            isDrawingLine = true;
+
+            // Calculate bar index for the starting point
+            const startBarIndex = viewOffset + (mouseX / barWidth);
+
+            // Create a new line with start point at current mouse position
+            currentLine = {
+                startX: mouseX,
+                startY: mouseY,
+                endX: mouseX,  // Initially same as start
+                endY: mouseY,  // Initially same as start
+                // Store price values and bar indices for proper scaling when zooming/panning
+                startPrice: hoveredPrice,
+                endPrice: hoveredPrice,
+                startBarIndex: startBarIndex,
+                endBarIndex: startBarIndex
+            };
+            return; // Exit early to prevent other mouse interactions
+        }
+
         // Check if mouse is over histogram resize handle (entire top border)
-        if (mouseY >= histogramY - 3 && mouseY <= histogramY + 5 && mouseX < histogramWidth) {
+        if (mouseY >= histogramY - 3 && mouseY <= histogramY + 5 && mouseX < fullWidth) {
             // Start resizing histogram
             isHistogramResizing = true;
             histogramResizeStartY = mouseY;
@@ -1293,7 +2525,8 @@
             initialViewOffset = viewOffset;
             initialMinPrice = minPrice;
             initialMaxPrice = maxPrice;
-            canvas.style.cursor = 'move';
+            // Keep the plus sign cursor during dragging
+            canvas.classList.add('cursor-plus');
             isDragging = true;
         } else {
             // Chart area dragging (both horizontal and vertical when not locked)
@@ -1303,19 +2536,90 @@
             initialViewOffset = viewOffset;
             initialMinPrice = minPrice;
             initialMaxPrice = maxPrice;
-            canvas.style.cursor = 'move'; // Change cursor to indicate both directions
+            // Keep the plus sign cursor during dragging
+            canvas.classList.add('cursor-plus');
         }
         isDragging = true;
     }
 
     function handleMouseMove(e) {
-        if (!canvas || !isDragging) return;
+        if (!canvas) return;
         e.preventDefault();
         const rect = canvas.getBoundingClientRect();
-        mouseX = e.clientX - rect.left;
-        mouseY = e.clientY - rect.top;
+        const newMouseX = e.clientX - rect.left;
+        const newMouseY = e.clientY - rect.top;
+
+        // Check if mouse has moved significantly since mouse down
+        if (!mouseHasMoved && (Math.abs(newMouseX - mouseX) > 3 || Math.abs(newMouseY - mouseY) > 3)) {
+            mouseHasMoved = true;
+        }
+
+        // Update mouse position
+        mouseX = newMouseX;
+        mouseY = newMouseY;
+
+        // Handle measurement tool - use the measurementInitiated flag
+        // This allows the measurement to continue even if Shift is released
+        if (window.measurementInitiated && measurementStart) {
+            console.log('Continuing measurement, initiated:', window.measurementInitiated);
+            // Update the end point of the measurement
+            measurementEnd = {
+                x: mouseX,
+                y: mouseY,
+                price: hoveredPrice,
+                barIndex: viewOffset + (mouseX / barWidth)
+            };
+
+            // Make sure isMeasuring is true to keep the measurement active
+            isMeasuring = true;
+
+            drawChart(); // Redraw to show the measurement
+            return;
+        }
+
+        // Handle line drawing mode
+        if (isDrawingLine && currentLine) {
+            if (currentLine.isDraggingEndpoint) {
+                // We're dragging an endpoint
+                if (currentLine.draggedEndpoint === 'start') {
+                    // Update the start point
+                    currentLine.startX = mouseX;
+                    currentLine.startY = mouseY;
+                    currentLine.startPrice = hoveredPrice;
+                    currentLine.startBarIndex = viewOffset + (mouseX / barWidth);
+                } else { // 'end'
+                    // Update the end point
+                    currentLine.endX = mouseX;
+                    currentLine.endY = mouseY;
+                    currentLine.endPrice = hoveredPrice;
+                    currentLine.endBarIndex = viewOffset + (mouseX / barWidth);
+                }
+            } else {
+                // Normal line drawing - update the end point
+                currentLine.endX = mouseX;
+                currentLine.endY = mouseY;
+                currentLine.endPrice = hoveredPrice;
+                currentLine.endBarIndex = viewOffset + (mouseX / barWidth);
+            }
+
+            drawChart(); // Redraw to show the line being drawn
+            return;
+        }
+
+        // If not drawing, check for line hover to show popup
+        if (!isDragging && !isDrawingLine) {
+            drawChart(); // Redraw to check for line hover and show popup
+        }
+
+        // For other interactions, only proceed if dragging
+        if (!isDragging) return;
 
         // Handle mouse movement during dragging
+
+        // Ensure cursor stays as plus sign during dragging if in chart area
+        if (mouseX < canvas.width - priceScaleWidth) {
+            canvas.classList.add('cursor-plus');
+        }
 
         // Handle histogram resizing
         if (isHistogramResizing) {
@@ -1400,25 +2704,40 @@
             const deltaX = mouseX - dragStartX;
             const currentChartWidth = canvas.width - priceScaleWidth;
             const currentBarWidth = currentChartWidth / visibleBars;
-            const barsToShift = currentBarWidth > 0 ? deltaX / currentBarWidth : 0;
+            // Invert the direction of the shift to make dragging more intuitive
+            // Dragging right should move the chart to show older bars (decrease viewOffset)
+            // Dragging left should move the chart to show newer bars (increase viewOffset)
+            const barsToShift = currentBarWidth > 0 ? -deltaX / currentBarWidth : 0;
 
-            let newViewOffset = initialViewOffset - barsToShift;
-            const maxViewOffset = bars.length; // Allow scrolling right up to the end
-            const minViewOffset = 0;
-            viewOffset = Math.max(minViewOffset, Math.min(newViewOffset, maxViewOffset));
+            // Make sure initialViewOffset is valid
+            if (initialViewOffset !== null && isFinite(initialViewOffset)) {
+                let newViewOffset = initialViewOffset + barsToShift;
+                // Add padding of 10% of visible bars to ensure space between newest candle and price scale
+                const rightPadding = Math.ceil(visibleBars * 0.1);
+                // Allow scrolling into future bars (50% of visible bars)
+                const futureBars = Math.ceil(visibleBars * 0.5);
+                const maxViewOffset = bars.length - visibleBars + rightPadding + futureBars; // Allow scrolling past the end into future
+                const minViewOffset = 0;
+                viewOffset = Math.max(minViewOffset, Math.min(newViewOffset, maxViewOffset));
+            }
 
             // Handle vertical scrolling (up/down) when not locked
             const deltaY = mouseY - dragStartY;
             const chartHeight = canvas.height - timeScaleHeight;
-            const priceRange = initialMaxPrice - initialMinPrice;
-            const priceShift = (deltaY / chartHeight) * priceRange;
 
-            // Move price range up or down based on vertical drag
-            if (priceRange > 0 && isFinite(priceRange)) {
-                minPrice = initialMinPrice + priceShift;
-                maxPrice = initialMaxPrice + priceShift;
-                // Only set isPriceScaleManuallySet to true when dragging the price scale itself
-                // This ensures the auto-zoom scale remains active when dragging the chart
+            // Make sure initialMinPrice and initialMaxPrice are valid
+            if (initialMinPrice !== null && initialMaxPrice !== null &&
+                isFinite(initialMinPrice) && isFinite(initialMaxPrice)) {
+                const priceRange = initialMaxPrice - initialMinPrice;
+                const priceShift = (deltaY / chartHeight) * priceRange;
+
+                // Move price range up or down based on vertical drag
+                if (priceRange > 0 && isFinite(priceRange)) {
+                    minPrice = initialMinPrice + priceShift;
+                    maxPrice = initialMaxPrice + priceShift;
+                    // Only set isPriceScaleManuallySet to true when dragging the price scale itself
+                    // This ensures the auto-zoom scale remains active when dragging the chart
+                }
             }
 
             drawChart();
@@ -1456,18 +2775,61 @@
         mouseX = e.clientX - rect.left;
         mouseY = e.clientY - rect.top;
 
+        // Expose mouse position for other components like liquidation markers
+        window.chartMouseX = mouseX;
+        window.chartMouseY = mouseY;
+
         // Always reset hovered limit order and zoom lens by default
         // This ensures the zoom lens disappears when not hovering over a limit
         hoveredLimitOrder = null;
         showZoomLens = false;
 
         // Calculate histogram area for resize handle detection
-        const histogramAreaHeight = canvas.height - timeScaleHeight - histogramHeight - histogramPaneGap;
-        const histogramY = histogramAreaHeight;
-        const histogramWidth = canvas.width - priceScaleWidth;
+        const totalChartHeight = canvas.height - timeScaleHeight - histogramHeight - histogramPaneGap;
+
+        // Histogram area
+        const histogramY = totalChartHeight;
+
+        // Force a redraw to update the time scale tag
+        // This ensures the time tag is always updated when the mouse moves
+        requestAnimationFrame(drawChart);
+
+        const fullWidth = canvas.width - priceScaleWidth;
+
+        // Calculate drag indicator button position
+        const middleX = fullWidth / 2;
+        const buttonWidth = 30;
+        const buttonHeight = 10;
+        const buttonX = middleX - buttonWidth / 2;
+        const buttonY = histogramY - buttonHeight / 2;
+
+        // Check if mouse is over the drag indicator button
+        if (mouseX >= buttonX && mouseX <= buttonX + buttonWidth &&
+            mouseY >= buttonY && mouseY <= buttonY + buttonHeight) {
+            canvas.style.cursor = 'ns-resize';
+
+            // Draw tooltip
+            const tooltipText = 'Drag to resize depth panes';
+            ctx.font = '12px Arial';
+            const textWidth = ctx.measureText(tooltipText).width;
+            const tooltipX = buttonX + buttonWidth / 2 - textWidth / 2;
+            const tooltipY = buttonY - 10;
+
+            // Draw tooltip background
+            ctx.fillStyle = 'rgba(40, 40, 40, 0.9)';
+            ctx.beginPath();
+            ctx.roundRect(tooltipX - 5, tooltipY - 15, textWidth + 10, 20, 3);
+            ctx.fill();
+
+            // Draw tooltip text
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.fillText(tooltipText, tooltipX, tooltipY);
+
+            return;
+        }
 
         // Check if mouse is over histogram resize handle
-        if (mouseY >= histogramY - 3 && mouseY <= histogramY + 5 && mouseX < histogramWidth) {
+        if (mouseY >= histogramY - 3 && mouseY <= histogramY + 5 && mouseX < fullWidth) {
             canvas.style.cursor = 'ns-resize';
             return;
         }
@@ -1478,11 +2840,18 @@
             return;
         }
 
+        // Set cursor to plus sign when over the chart area
+        if (mouseX < canvas.width - priceScaleWidth) {
+            canvas.classList.add('cursor-plus');
+        } else {
+            canvas.classList.remove('cursor-plus');
+        }
+
         // Calculate hovered price
-        const chartHeight = canvas.height - timeScaleHeight - histogramHeight - histogramPaneGap;
-        if (mouseY >= 0 && mouseY <= chartHeight) {
+        // Use the same totalChartHeight calculated above
+        if (mouseY >= 0 && mouseY <= totalChartHeight) {
             const priceRange = Math.max(1e-6, maxPrice - minPrice);
-            hoveredPrice = maxPrice - (mouseY / chartHeight) * priceRange;
+            hoveredPrice = maxPrice - (mouseY / totalChartHeight) * priceRange;
 
             // Calculate snapped mouse X position for bar-to-bar movement
             snappedMouseX = calculateNearestBarCenter(mouseX);
@@ -1525,7 +2894,7 @@
 
             // If mouse is in the time scale area, still calculate the bar index
             // This allows the crosshair to work in the time scale area
-            if (mouseY > chartHeight && mouseY <= canvas.height) {
+            if (mouseY > totalChartHeight && mouseY <= canvas.height) {
                 // Keep the same horizontal position calculation
                 // This ensures the vertical crosshair aligns with the correct bar
             }
@@ -1537,9 +2906,10 @@
         // Set cursor style based on position
         if (mouseX > canvas.width - priceScaleWidth) {
             canvas.style.cursor = 'ns-resize'; // Price scale area
+            canvas.classList.remove('cursor-plus');
         } else {
-            // Use crosshair cursor for both chart area and time scale area
-            canvas.style.cursor = 'crosshair';
+            // Use plus sign cursor for both chart area and time scale area
+            canvas.classList.add('cursor-plus');
         }
         drawChart();
     }
@@ -1547,6 +2917,93 @@
     function handleMouseUp(e) {
         if (!canvas) return;
         e.preventDefault();
+
+        // End measurement if we were measuring
+        if (isMeasuring || window.measurementInitiated) {
+            console.log('Ending measurement, was initiated:', window.measurementInitiated);
+            isMeasuring = false;
+            // Reset the measurement initiated flag
+            window.measurementInitiated = false;
+            // Keep the measurement visible until the next chart redraw
+            // We don't reset measurementStart and measurementEnd here
+            // so they can be used in drawChart to show the final measurement
+            drawChart();
+            return;
+        }
+
+        // Check if we have a pending line delete and the mouse hasn't moved
+        if (window.pendingLineDelete !== undefined && !mouseHasMoved) {
+            // Delete the line
+            lines.splice(window.pendingLineDelete, 1);
+            saveLines();
+            drawChart();
+            window.pendingLineDelete = undefined;
+            return;
+        }
+
+        // Clear any pending line delete
+        window.pendingLineDelete = undefined;
+
+        // Handle line drawing completion
+        if (isDrawingLine && currentLine) {
+            // Check if we're dragging an endpoint
+            if (currentLine.isDraggingEndpoint) {
+                // Update the existing line instead of creating a new one
+                const lineIndex = currentLine.originalIndex;
+
+                // Calculate the current bar index for the dragged point
+                const currentBarIndex = viewOffset + (mouseX / barWidth);
+
+                // Only update if the points are different
+                if (currentLine.endX !== currentLine.startX || currentLine.endY !== currentLine.startY) {
+                    if (currentLine.draggedEndpoint === 'start') {
+                        // Update the line with new start point
+                        lines[lineIndex] = {
+                            startPrice: hoveredPrice,
+                            endPrice: currentLine.endPrice,
+                            startBarIndex: currentBarIndex,
+                            endBarIndex: currentLine.endBarIndex
+                        };
+                        console.log('Line start point moved:', lines[lineIndex]);
+                    } else { // 'end'
+                        // Update the line with new end point
+                        lines[lineIndex] = {
+                            startPrice: currentLine.startPrice,
+                            endPrice: hoveredPrice,
+                            startBarIndex: currentLine.startBarIndex,
+                            endBarIndex: currentBarIndex
+                        };
+                        console.log('Line end point moved:', lines[lineIndex]);
+                    }
+                    // Save lines to localStorage
+                    saveLines();
+                }
+            } else {
+                // Only add the line if it's not just a click (start and end points are different)
+                if (currentLine.startX !== currentLine.endX || currentLine.startY !== currentLine.endY) {
+                    // Add the completed line to the lines array
+                    lines.push({
+                        startPrice: currentLine.startPrice,
+                        endPrice: currentLine.endPrice,
+                        startBarIndex: currentLine.startBarIndex,
+                        endBarIndex: currentLine.endBarIndex
+                    });
+                    console.log('Line added:', lines[lines.length - 1]);
+                    // Save lines to localStorage
+                    saveLines();
+                }
+            }
+
+            // Reset the current line and drawing state
+            currentLine = null;
+            isDrawingLine = false;
+            isDraggingEndpoint = false;
+            drawChart();
+            return;
+        }
+
+        // Reset mouse movement tracking
+        mouseHasMoved = false;
 
         // Get current coin for logging
         const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
@@ -1585,8 +3042,10 @@
         // Set cursor based on position
         if (x > canvas.width - priceScaleWidth) {
             canvas.style.cursor = 'ns-resize';
+            canvas.classList.remove('cursor-plus');
         } else {
-            canvas.style.cursor = 'crosshair';
+            // Always keep plus sign cursor in chart area
+            canvas.classList.add('cursor-plus');
         }
 
         // Update hover state
@@ -1636,6 +3095,7 @@
                     // If we don't have valid values, get them from the visible bars
                     const startIndex = Math.max(0, Math.floor(viewOffset));
                     const endIndex = Math.min(bars.length, startIndex + Math.ceil(visibleBars));
+                    // Get visible bars without reversing (bars are already in chronological order)
                     const visibleBarsData = bars.slice(startIndex, endIndex);
 
                     if (visibleBarsData.length > 0) {
@@ -1698,6 +3158,12 @@
                     minPrice = newMinPrice;
                     maxPrice = newMaxPrice;
                     isPriceScaleManuallySet = true;
+
+                    // Save zoom state to localStorage
+                    localStorage.setItem('chartMinPrice', minPrice);
+                    localStorage.setItem('chartMaxPrice', maxPrice);
+                    localStorage.setItem('chartPriceScaleManuallySet', 'true');
+
                     drawChart();
 
                     console.log(`Price scale zoomed for ${currentCoin}:`, {
@@ -1711,7 +3177,7 @@
 
             // Chart zooming (horizontal only)
             const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
-            const newVisibleBars = Math.max(10, Math.min(750, Math.round(visibleBars * zoomFactor)));
+            const newVisibleBars = Math.max(10, Math.min(1500, Math.round(visibleBars * zoomFactor)));
 
             if (newVisibleBars === visibleBars) return;
 
@@ -1727,16 +3193,31 @@
                 return;
             }
 
+            // Calculate the bar index under the mouse cursor
             const barIndexUnderMouse = viewOffset + (mouseXOnChart / currentBarWidth);
 
+            // Calculate the new view offset to keep the bar under the mouse at the same position
             const mouseRatio = mouseXOnChart / currentChartWidth;
             const newViewOffset = barIndexUnderMouse - mouseRatio * newVisibleBars;
 
+            // Update visible bars
             visibleBars = newVisibleBars;
-            const maxViewOffset = bars.length;
-            const minViewOffset = 0;
 
+            // Add padding of 10% of visible bars to ensure space between newest candle and price scale
+            const rightPadding = Math.ceil(newVisibleBars * 0.1);
+            // Allow scrolling into future bars (50% of visible bars)
+            const futureBars = Math.ceil(newVisibleBars * 0.5);
+
+            // Set limits for view offset
+            const maxViewOffset = bars.length - newVisibleBars + rightPadding + futureBars; // Allow scrolling past the end into future
+            const minViewOffset = 0; // Don't allow scrolling past the beginning
+
+            // Apply the new view offset with limits
             viewOffset = Math.max(minViewOffset, Math.min(newViewOffset, maxViewOffset));
+
+            // Save zoom state to localStorage
+            localStorage.setItem('chartVisibleBars', visibleBars);
+            localStorage.setItem('chartViewOffset', viewOffset);
 
             // Don't call resizeCanvas here, just recalculate barWidth
             barWidth = (canvas.width - priceScaleWidth) / visibleBars;
@@ -1755,6 +3236,10 @@
         e.preventDefault();
         mouseX = null;
         mouseY = null;
+
+        // Also reset global mouse position variables
+        window.chartMouseX = null;
+        window.chartMouseY = null;
         hoveredBarIndex = -1;
         hoveredPrice = null;
         hoveredLimitOrder = null;
@@ -1764,6 +3249,7 @@
             handleMouseUp(e);
         }
         canvas.style.cursor = 'default';
+        canvas.classList.remove('cursor-plus');
         drawChart();
     }
 
@@ -1784,10 +3270,39 @@
 
             // Redraw to trigger auto-adjustment
             drawChart();
+            return;
         }
     }
 
+    // Helper function to calculate distance from a point to a line
+    function distanceToLine(x, y, x1, y1, x2, y2) {
+        // Line length
+        const lineLength = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+
+        // If line length is 0, return distance to the point
+        if (lineLength === 0) return Math.sqrt((x - x1) ** 2 + (y - y1) ** 2);
+
+        // Calculate distance from point to line
+        const t = ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / (lineLength ** 2);
+
+        // If t is outside [0,1], the closest point is an endpoint
+        if (t < 0) return Math.sqrt((x - x1) ** 2 + (y - y1) ** 2);
+        if (t > 1) return Math.sqrt((x - x2) ** 2 + (y - y2) ** 2);
+
+        // Closest point on the line
+        const closestX = x1 + t * (x2 - x1);
+        const closestY = y1 + t * (y2 - y1);
+
+        // Return distance to closest point
+        return Math.sqrt((x - closestX) ** 2 + (y - closestY) ** 2);
+    }
+
     // --- Helper Functions for Drawing ---
+    function getColor(colorName, defaultColor) {
+        // Get color from color customizer if available, otherwise use default
+        return window.colorCustomizer?.colors?.[colorName] || defaultColor;
+    }
+
     function getYForPrice(price) {
         // Use histogramHeight only if bid/ask strength is visible
         const histogramHeightToUse = isBidAskStrengthVisible ? histogramHeight : 0;
@@ -1983,7 +3498,397 @@
     }
 
     // --- Volume Profile Functions ---
-    // Volume Profile Functions removed
+    function calculateVolumeProfile() {
+        console.log('calculateVolumeProfile called');
+
+        // Reset volume profile data
+        volumeProfileData.pricePoints = [];
+        volumeProfileData.maxVolume = 0;
+        volumeProfileData.totalVolume = 0;
+        volumeProfileData.valueAreaHigh = 0;
+        volumeProfileData.valueAreaLow = 0;
+        volumeProfileData.poc = 0;
+
+        // Fixed lookback days (3 days)
+        const lookbackDays = 3;
+        // Calculate number of bars based on lookback days (288 bars per day for 5-minute bars)
+        // 288 = 24 hours * 12 bars per hour (5-minute bars)
+        const numBarsToUse = 864; // Exactly 3 days of 5-minute bars
+        console.log(`Using fixed ${lookbackDays} days for volume profile = ${numBarsToUse} 5-minute bars`);
+
+        // Get current timeframe
+        const tf = window.currentTimeframe || currentTimeframe;
+        console.log('Current timeframe for volume profile:', tf);
+
+        // Check if we're on 5-minute timeframe
+        if (tf === TIMEFRAME_5M) {
+            // We're already on 5-minute timeframe, just use the bars directly
+            // Check if we need to fetch more data for the volume profile
+            if (bars.length < numBarsToUse) {
+                console.log(`Not enough bars for ${lookbackDays}-day volume profile. Have ${bars.length}, need ${numBarsToUse}`);
+                // We'll continue with what we have, but the profile might not be complete
+            }
+
+            // Get the most recent bars for the volume profile
+            const recentBars = bars.slice(-numBarsToUse);
+
+            if (recentBars.length === 0) {
+                console.log('No recent bars found for volume profile');
+                return;
+            }
+
+            // Continue with these bars
+            processVolumeProfileBars(recentBars);
+            return;
+        }
+
+        // We're on a different timeframe, need to fetch 5-minute bars specifically
+        console.log(`Current timeframe is ${tf}m, fetching 5-minute bars for volume profile...`);
+
+        // Get current trading pair from coin manager
+        let pairToUse = currentPair;
+        if (window.coinManager) {
+            pairToUse = window.coinManager.getCurrentCoin().bybitSymbol;
+        }
+
+        // Fetch 5-minute bars specifically for volume profile
+        // Make sure we get the most recent data by including a timestamp parameter
+        const timestamp = Date.now();
+        fetch(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${pairToUse}&interval=5&limit=2000&timestamp=${timestamp}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.retCode === 0 && data.result && data.result.list) {
+                    // Parse the 5-minute bars
+                    const fiveMinBars = data.result.list
+                        .map(bar => ({
+                            time: parseInt(bar[0]),
+                            open: parseFloat(bar[1]),
+                            high: parseFloat(bar[2]),
+                            low: parseFloat(bar[3]),
+                            close: parseFloat(bar[4])
+                        }))
+                        .filter(bar => {
+                            // Filter out invalid bars
+                            return !isNaN(bar.time) && bar.time > 0 &&
+                                   !isNaN(bar.open) && !isNaN(bar.high) &&
+                                   !isNaN(bar.low) && !isNaN(bar.close);
+                        });
+
+                    // Sort by time (oldest first)
+                    fiveMinBars.sort((a, b) => a.time - b.time);
+
+                    // Take the most recent 1440 bars
+                    const recentBars = fiveMinBars.slice(-numBarsToUse);
+
+                    if (recentBars.length === 0) {
+                        console.log('No 5-minute bars found for volume profile');
+                        return;
+                    }
+
+                    console.log(`Using ${recentBars.length} 5-minute bars for volume profile`);
+
+                    // Process these bars for volume profile
+                    processVolumeProfileBars(recentBars);
+
+                    // Redraw chart to show the volume profile
+                    drawChart();
+                } else {
+                    console.error('Failed to fetch 5-minute bars for volume profile:', data.retMsg || 'Unknown error');
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching 5-minute bars for volume profile:', error);
+            });
+    }
+
+    function processVolumeProfileBars(recentBars) {
+        if (!recentBars || recentBars.length === 0) {
+            console.log('No bars to process for volume profile');
+            return;
+        }
+
+        console.log(`Processing ${recentBars.length} bars for volume profile`);
+
+        // Find min and max prices in the period
+        let periodLow = Infinity;
+        let periodHigh = -Infinity;
+
+        recentBars.forEach(bar => {
+            periodLow = Math.min(periodLow, bar.low);
+            periodHigh = Math.max(periodHigh, bar.high);
+        });
+
+        // Add a small buffer to the price range to ensure we capture all activity
+        const priceBuffer = (periodHigh - periodLow) * 0.02; // 2% buffer
+        periodLow = Math.max(0, periodLow - priceBuffer); // Ensure we don't go below 0
+        periodHigh = periodHigh + priceBuffer;
+
+        // Use 864 bars to match the number of 5-minute bars in 3 days
+        const numBuckets = 864; // Exactly 864 to match the 3 days of 5-minute bars
+        const priceBucketSize = (periodHigh - periodLow) / numBuckets;
+        const priceBuckets = {};
+
+        // Initialize price buckets
+        for (let i = 0; i < numBuckets; i++) {
+            const bucketPrice = periodLow + (i * priceBucketSize);
+            priceBuckets[bucketPrice.toFixed(8)] = 0; // Use more precision to avoid rounding issues
+        }
+
+        // Calculate volume for each price bucket using TradingView-like algorithm
+        recentBars.forEach(bar => {
+            // Use actual volume if available, otherwise use a proxy based on price movement
+            const hasVolume = bar.volume !== undefined && bar.volume > 0;
+
+            // Skip invalid bars
+            if (bar.high <= bar.low || isNaN(bar.high) || isNaN(bar.low)) return;
+
+            // Calculate bar volume - TradingView uses actual volume when available
+            let barVolume;
+            if (hasVolume) {
+                barVolume = bar.volume;
+            } else {
+                // If no volume data, use a proxy that's proportional to price movement and range
+                // This is similar to how TradingView estimates volume when it's not available
+                const priceRange = bar.high - bar.low;
+                const priceMove = Math.abs(bar.close - bar.open);
+                // Scale up significantly for better visibility
+                barVolume = priceRange * (1 + priceMove / priceRange) * 1000; // Increased scale factor from 100 to 1000
+            }
+
+            // Ensure we have a minimum volume for each bar to make the profile visible
+            barVolume = Math.max(barVolume, 10);
+
+            // TradingView's volume profile uses a TPO-like (Time Price Opportunity) approach
+            // where each price level the bar traded at gets an equal portion of the volume
+
+            // Calculate how many price levels to sample within this bar
+            // More granular for larger price ranges
+            const barPriceRange = bar.high - bar.low;
+            // Increase the number of levels for better distribution
+            const numLevels = Math.max(100, Math.ceil(barPriceRange / (priceBucketSize * 0.05)));
+            const levelStep = barPriceRange / numLevels;
+
+            // Distribute volume across all price levels within the bar
+            for (let i = 0; i <= numLevels; i++) {
+                const price = bar.low + (i * levelStep);
+
+                // Find which bucket this price belongs to
+                const bucketIndex = Math.floor((price - periodLow) / priceBucketSize);
+                if (bucketIndex >= 0 && bucketIndex < numBuckets) {
+                    const bucketPrice = periodLow + (bucketIndex * priceBucketSize);
+
+                    // TradingView gives more weight to prices near the close price
+                    // This helps identify where most trading actually occurred
+                    let volumeWeight = 1.0;
+
+                    // Calculate distance from this price to the close price
+                    const distToClose = Math.abs(price - bar.close);
+
+                    // Give more weight to prices near the close
+                    if (distToClose < priceBucketSize) {
+                        volumeWeight = 5.0; // Increased weight near close price (was 3.0)
+                    } else if (distToClose < priceBucketSize * 3) {
+                        volumeWeight = 2.5; // Increased weight for prices somewhat near close (was 1.5)
+                    }
+
+                    // Add weighted volume to this price bucket
+                    // Divide by numLevels to distribute volume across the bar's price range
+                    priceBuckets[bucketPrice.toFixed(8)] += (barVolume / numLevels) * volumeWeight;
+                }
+            }
+        });
+
+        // Add extra debug output to help diagnose POC issues
+        console.log('Volume profile calculation details:', {
+            periodLow,
+            periodHigh,
+            numBuckets,
+            priceBucketSize,
+            numPriceBuckets: Object.keys(priceBuckets).length,
+            sampleBuckets: Object.entries(priceBuckets)
+                .sort((a, b) => parseFloat(b[1]) - parseFloat(a[1]))
+                .slice(0, 5)
+                .map(([price, volume]) => ({ price: parseFloat(price), volume }))
+        });
+
+        // Debug output to check price buckets
+        console.log('Volume profile calculation:', {
+            periodLow,
+            periodHigh,
+            numBuckets,
+            priceBucketSize,
+            numPriceBuckets: Object.keys(priceBuckets).length
+        });
+
+        // Convert buckets to array for easier processing
+        const pricePoints = Object.entries(priceBuckets).map(([price, volume]) => ({
+            price: parseFloat(price),
+            volume: volume
+        })).filter(point => point.volume > 0);
+
+        // Sort by price (ascending)
+        pricePoints.sort((a, b) => a.price - b.price);
+
+        // Calculate total volume and find max volume
+        let totalVolume = 0;
+        let maxVolume = 0;
+        let pocPrice = 0;
+        let previousPocPrice = volumeProfileData.poc; // Store the previous POC price
+        let hasSignificantChange = false;
+
+        // First pass: calculate total volume and find max volume
+        pricePoints.forEach(point => {
+            totalVolume += point.volume;
+            if (point.volume > maxVolume) {
+                maxVolume = point.volume;
+                pocPrice = point.price;
+            }
+        });
+
+        // Second pass: find all price points with volume close to max volume
+        // This helps identify potential POC candidates
+        const pocCandidates = [];
+        const volumeThreshold = maxVolume * 0.95; // Consider points within 95% of max volume
+
+        pricePoints.forEach(point => {
+            if (point.volume >= volumeThreshold) {
+                pocCandidates.push({
+                    price: point.price,
+                    volume: point.volume
+                });
+            }
+        });
+
+        // Sort candidates by volume (highest first)
+        pocCandidates.sort((a, b) => b.volume - a.volume);
+
+        console.log('POC candidates:', pocCandidates);
+
+        // If we have a previous POC and it's among the candidates, prefer to keep it
+        // This adds "stickiness" to prevent the POC from jumping around
+        if (previousPocPrice > 0) {
+            // Check if previous POC is among the candidates
+            const previousPocCandidate = pocCandidates.find(c =>
+                Math.abs(c.price - previousPocPrice) < 0.0001);
+
+            if (previousPocCandidate) {
+                // If previous POC is still a valid candidate, keep it
+                console.log('Keeping previous POC as it\'s still a valid candidate');
+                pocPrice = previousPocPrice;
+            } else {
+                // If the top candidate has significantly more volume than others,
+                // or if the previous POC is no longer valid, use the new top candidate
+                hasSignificantChange = true;
+                console.log('Previous POC is no longer a valid candidate, using new POC');
+            }
+        }
+
+        // Calculate Value Area (68% of total volume) - as requested
+        const valueAreaVolume = totalVolume * 0.68;
+        let currentVolume = 0;
+        let valueAreaPrices = [];
+
+        // Find the exact POC index
+        const pocIndex = pricePoints.findIndex(point => Math.abs(point.price - pocPrice) < 0.0001);
+        if (pocIndex < 0) {
+            console.error('POC index not found, using closest match');
+            // Find closest price point to POC
+            let minDist = Infinity;
+            let closestIndex = -1;
+
+            pricePoints.forEach((point, index) => {
+                const dist = Math.abs(point.price - pocPrice);
+                if (dist < minDist) {
+                    minDist = dist;
+                    closestIndex = index;
+                }
+            });
+
+            if (closestIndex >= 0) {
+                console.log(`Using closest price point to POC: ${pricePoints[closestIndex].price} (POC was ${pocPrice})`);
+                pocPrice = pricePoints[closestIndex].price;
+            }
+        }
+
+        // Start from POC and expand outward (TradingView approach)
+        // This is how TradingView calculates the Value Area
+        const exactPocIndex = pricePoints.findIndex(point => Math.abs(point.price - pocPrice) < 0.0001);
+
+        if (exactPocIndex >= 0) {
+            // Add POC to value area
+            valueAreaPrices.push(pocPrice);
+            currentVolume += pricePoints[exactPocIndex].volume;
+
+            // Expand outward from POC, always taking the higher volume side first
+            let upIndex = exactPocIndex + 1;
+            let downIndex = exactPocIndex - 1;
+
+            // Keep adding price levels until we reach 70% of total volume
+            while (currentVolume < valueAreaVolume && (upIndex < pricePoints.length || downIndex >= 0)) {
+                // Get volumes above and below current value area
+                const upVolume = upIndex < pricePoints.length ? pricePoints[upIndex].volume : 0;
+                const downVolume = downIndex >= 0 ? pricePoints[downIndex].volume : 0;
+
+                if (upVolume > downVolume) {
+                    // Add the upper price level
+                    if (upIndex < pricePoints.length) {
+                        valueAreaPrices.push(pricePoints[upIndex].price);
+                        currentVolume += upVolume;
+                    }
+                    upIndex++;
+                } else {
+                    // Add the lower price level
+                    if (downIndex >= 0) {
+                        valueAreaPrices.push(pricePoints[downIndex].price);
+                        currentVolume += downVolume;
+                    }
+                    downIndex--;
+                }
+            }
+
+            // Log value area calculation details
+            console.log('Value Area calculation (68%):', {
+                totalVolume,
+                valueAreaTarget: valueAreaVolume,
+                actualValueAreaVolume: currentVolume,
+                percentOfTotal: (currentVolume / totalVolume * 100).toFixed(2) + '%',
+                numPricesInValueArea: valueAreaPrices.length
+            });
+        } else {
+            console.error('Could not find exact POC in price points array');
+        }
+
+        // Find Value Area High and Value Area Low
+        const valueAreaHigh = Math.max(...valueAreaPrices);
+        const valueAreaLow = Math.min(...valueAreaPrices);
+
+        // Update volume profile data
+        volumeProfileData.pricePoints = pricePoints;
+        volumeProfileData.maxVolume = maxVolume;
+        volumeProfileData.totalVolume = totalVolume;
+        volumeProfileData.valueAreaHigh = valueAreaHigh;
+        volumeProfileData.valueAreaLow = valueAreaLow;
+
+        // Only update POC if:
+        // 1. We don't have a previous POC (first calculation)
+        // 2. The previous POC is no longer a valid candidate
+        // 3. There's a significant change in the volume profile
+        if (previousPocPrice === 0 || hasSignificantChange) {
+            volumeProfileData.poc = pocPrice;
+            console.log('POC updated to:', pocPrice);
+        } else {
+            console.log('Maintaining previous POC:', previousPocPrice);
+        }
+
+        console.log('Volume profile calculated:', {
+            totalBars: recentBars.length,
+            pricePoints: pricePoints.length,
+            totalVolume,
+            poc: pocPrice,
+            valueAreaHigh,
+            valueAreaLow
+        });
+    }
 
     function formatTimestamp(timestamp) {
         const date = new Date(timestamp);
@@ -1992,14 +3897,19 @@
         const day = date.getDate().toString().padStart(2, '0');
         const month = (date.getMonth() + 1).toString().padStart(2, '0');
 
-        // Verify that this timestamp is aligned with 5-minute intervals for bar timestamps
-        // This ensures we only show times like 00:00, 00:05, 00:10, etc.
-        if (minutes % 5 !== 0) {
-            console.warn(`Timestamp not aligned with 5-minute intervals: ${date.toLocaleTimeString()}`);
-        }
+        // Check if this is a future date
+        const now = new Date();
+        const isFuture = date > now;
+
+        // We don't need the timeframe for formatting anymore
 
         // TradingView style: Always use hours:minutes format without seconds
-        const timeFormat = `${hours}:${minutes}`;
+        let timeFormat = `${hours}:${minutes}`;
+
+        // Add a prefix for future dates to make them visually distinct
+        if (isFuture) {
+            timeFormat = `→${timeFormat}`; // Arrow indicating future
+        }
 
         // If the bar is from today, just show time (TradingView style)
         const today = new Date();
@@ -2016,6 +3926,12 @@
     // --- Drawing Functions ---
     function drawCrosshair() {
         if (!ctx || !canvas || mouseX === null || mouseY === null) return;
+
+        // Save the current context state
+        ctx.save();
+
+        // Debug info - uncomment if needed
+        // console.log('drawCrosshair called:', { mouseX, mouseY, time: new Date().toISOString() });
 
         // Use histogramHeight only if bid/ask strength is visible
         const histogramHeightToUse = isBidAskStrengthVisible ? histogramHeight : 0;
@@ -2051,6 +3967,14 @@
                 // We're hovering over an existing bar
                 hoveredTime = bars[barIndex].time;
 
+                // Make sure the time is aligned with the current timeframe
+                // Reduced logging to improve performance
+                // const date = new Date(hoveredTime);
+                // const tf = window.currentTimeframe || currentTimeframe;
+                // console.log('Hovering over existing bar at time:', date.toLocaleTimeString(), 'with timeframe:', tf);
+                // console.log('Bar index:', barIndex, 'of', bars.length, 'bars');
+                // console.log('Bar data:', bars[barIndex]);
+
                 // We're not adding seconds anymore as requested
             } else if (barIndex >= bars.length) {
                 // We're hovering over a future bar
@@ -2061,7 +3985,10 @@
                 // We're not adding seconds anymore as requested
                 hoveredTime = baseFutureTime;
                 isFutureBar = true;
+                // console.log('Hovering over future bar at time:', new Date(hoveredTime).toLocaleTimeString());
             }
+        } else {
+            // console.log('No bars available for time tag');
         }
 
         // Draw crosshair lines with consistent styling
@@ -2129,6 +4056,9 @@
             ctx.textBaseline = 'middle';
             // Use the same rounded X coordinate as the vertical line for perfect alignment
             ctx.fillText(formattedTime, roundedCrosshairX, timeTagY + timeTagHeight / 2);
+
+            // Reduced logging to improve performance
+            // console.log('Time tag displayed:', formattedTime, 'for timestamp:', new Date(hoveredTime).toLocaleString());
         }
 
         // Draw price label to the left of the price scale
@@ -2274,13 +4204,32 @@
 
         // We no longer need to draw time labels in the crosshair function
         // since we're showing all time labels in the timescale
+
+        // Restore the context state
+        ctx.restore();
     }
 
     function drawBidAskTags() {
         if (!ctx || !canvas) return;
 
+        console.log('Drawing bid/ask tags and price tag/countdown');
+
+        // Save the current context state
+        ctx.save();
+
         // Get current coin
         const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+
+        // Debug orderbook data
+        console.log('Orderbook data for tags:', {
+            bids: orderbook.bids ? orderbook.bids.length : 0,
+            asks: orderbook.asks ? orderbook.asks.length : 0
+        });
+
+        // Ensure we have valid orderbook data
+        if (!orderbook.bids || !orderbook.asks) {
+            console.error('Invalid orderbook data for tags');
+        }
 
         // For XRP, create dummy orderbook data if none exists
         if (currentCoin === 'XRP' && window.xrpPrice > 0 &&
@@ -2373,9 +4322,6 @@
         const bidDollarValue = topBid ? topBid[2] : 0;
         const askDollarValue = topAsk ? topAsk[2] : 0;
 
-        // Get current price info
-        const currentPrice = bars.length > 0 ? bars[bars.length - 1].close : null;
-        const currentPriceY = currentPrice !== null ? getYForPrice(currentPrice) : null;
 
         // Calculate Y positions for bid and ask
         const bidLabelY = getYForPrice(topBidPrice);
@@ -2394,8 +4340,12 @@
         // Create array of all tags with their positions and sizes
         const tags = [];
 
-        // Add current price tag if available
-        if (currentPrice !== null && currentPriceY !== null) {
+        // Always add current price tag if we have bars data
+        if (bars.length > 0) {
+            // Get the current price from the last bar
+            const currentPrice = bars[bars.length - 1].close;
+            const currentPriceY = getYForPrice(currentPrice);
+
             // Get color based on price movement - use the same colors as candles
             const prevBar = bars.length > 1 ? bars[bars.length - 2] : null;
             const priceChange = prevBar ? currentPrice - prevBar.close : 0;
@@ -2410,10 +4360,11 @@
                 height: tagHeight,
                 color: priceColor,
                 price: currentPrice,
-                value: null
+                value: null,
+                visible: true // Always make the price tag visible
             });
 
-            // Add countdown tag (will be positioned after adjusting all tags)
+            // Always add countdown tag (will be positioned after adjusting all tags)
             // Use the same color as the price tag for consistency
             tags.push({
                 type: 'countdown',
@@ -2421,7 +4372,8 @@
                 height: tagHeight,
                 color: priceColor, // Use the same color as the price tag
                 price: null,
-                value: null
+                value: null,
+                visible: true // Always make the countdown visible
             });
         }
 
@@ -2476,8 +4428,12 @@
         // Check if tags are within visible price range
         const chartHeight = canvas.height - timeScaleHeight;
         tags.forEach(tag => {
+            // If the tag already has visibility set (like price tag and countdown), respect that
+            if (tag.visible !== undefined) {
+                // Keep the existing visibility setting
+            }
             // For price-based tags, check if the price is within the visible range
-            if (tag.price !== null) {
+            else if (tag.price !== null) {
                 // If price is outside visible range, mark tag as invisible
                 if (tag.price < minPrice || tag.price > maxPrice) {
                     tag.visible = false;
@@ -2605,24 +4561,309 @@
                 // No connecting line needed - the tag will extend through the separator
             }
         });
+
+        // Restore the context state to ensure clean drawing state for subsequent operations
+        ctx.restore();
+        console.log('Bid/ask tags drawing complete');
     }
 
-    // Draw the bid/ask strength histogram
+    // Function to filter orders within 2.5% of the current price
+    function filterOrdersWithinPercentage(orders, currentPrice, percentage = 2.5) {
+        if (!orders || !orders.length || !currentPrice) return [];
+
+        // Calculate the price range (2.5% up and down)
+        const lowerBound = currentPrice * (1 - percentage / 100);
+        const upperBound = currentPrice * (1 + percentage / 100);
+
+        // Filter orders within the range
+        return orders.filter(order => {
+            const price = order[0]; // price is at index 0
+            return price >= lowerBound && price <= upperBound;
+        });
+    }
+
+    // Draw the 2.5% range bid/ask strength histogram (left side of pane)
+    function drawAllOrdersBidAskStrengthHistogram() {
+        if (!ctx || !canvas) return;
+
+        // Check if bid/ask strength histogram is visible
+        if (!isBidAskStrengthVisible) {
+            console.log('Bid/Ask strength histogram is not visible, skipping 2.5% range orders');
+            return;
+        }
+
+        // Save the current context state
+        ctx.save();
+
+        // Make sure line dash is reset to solid lines
+        ctx.setLineDash([]);
+
+        console.log('Drawing 2.5% range bid/ask strength histogram');
+
+        // Calculate the total USD value of bids and asks within 2.5% of current price
+        let totalBidValue = 0;
+        let totalAskValue = 0;
+
+        // Ensure unfilteredOrderbook is properly initialized
+        if (!window.unfilteredOrderbook || !window.unfilteredOrderbook.bids || !window.unfilteredOrderbook.asks) {
+            console.error('Unfiltered orderbook not properly initialized for histogram');
+            window.unfilteredOrderbook = { bids: [], asks: [] };
+            unfilteredOrderbook = window.unfilteredOrderbook;
+        }
+
+        // Get current price from the last bar
+        const currentPrice = bars.length > 0 ? bars[bars.length - 1].close : 0;
+        if (currentPrice === 0) {
+            console.log('Cannot calculate 2.5% range - current price is 0');
+            ctx.restore();
+            return;
+        }
+
+        // Filter orders within 2.5% of current price
+        const unfilteredOrderbookToUse = window.unfilteredOrderbook;
+        const rangePercentage = 2.5; // 2.5% up and down
+
+        // Filter bids and asks within 2.5% of current price
+        const filteredBids = filterOrdersWithinPercentage(unfilteredOrderbookToUse.bids, currentPrice, rangePercentage);
+        const filteredAsks = filterOrdersWithinPercentage(unfilteredOrderbookToUse.asks, currentPrice, rangePercentage);
+
+        // Take top 20 by value
+        const topBids = filteredBids.sort((a, b) => b[2] - a[2]).slice(0, 20);
+        const topAsks = filteredAsks.sort((a, b) => b[2] - a[2]).slice(0, 20);
+
+        console.log('2.5% range orderbook data:', {
+            bids: topBids.length,
+            asks: topAsks.length,
+            currentPrice: currentPrice,
+            lowerBound: currentPrice * (1 - rangePercentage / 100),
+            upperBound: currentPrice * (1 + rangePercentage / 100)
+        });
+
+        // Calculate total values and store individual values for histogram
+        const bidValues = [];
+        const askValues = [];
+
+        topBids.forEach(bid => {
+            const value = bid[2]; // bid[2] is the USD value
+            totalBidValue += value;
+            bidValues.push(value);
+        });
+
+        topAsks.forEach(ask => {
+            const value = ask[2]; // ask[2] is the USD value
+            totalAskValue += value;
+            askValues.push(value);
+        });
+
+        // Sort values in descending order for better visualization
+        bidValues.sort((a, b) => b - a);
+        askValues.sort((a, b) => b - a);
+
+        // Define the histogram area
+        const chartHeight = canvas.height - timeScaleHeight - histogramHeight - histogramPaneGap;
+        const histogramY = chartHeight;
+        const histogramWidth = (canvas.width - priceScaleWidth) / 2; // Half width for side-by-side display
+
+        // Draw background for left half of histogram pane
+        ctx.fillStyle = '#131722'; // Dark background
+        ctx.fillRect(0, histogramY, histogramWidth, histogramHeight);
+
+        // Draw separator line between chart and histogram
+        ctx.strokeStyle = '#2a2e39'; // Slightly lighter than background
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, histogramY);
+        ctx.lineTo(canvas.width, histogramY);
+        ctx.stroke();
+
+        // Draw vertical separator between the two histograms
+        ctx.beginPath();
+        ctx.moveTo(histogramWidth, histogramY);
+        ctx.lineTo(histogramWidth, histogramY + histogramHeight);
+        ctx.stroke();
+
+        // Draw a subtle drag handle at the top of the histogram pane
+        ctx.fillStyle = 'rgba(100, 100, 100, 0.3)';
+        ctx.fillRect(0, histogramY, histogramWidth, 3);
+
+        // Draw a drag indicator button in the middle of the pane separator
+        // Check if sidebar is visible
+        const isSidebarVisible = document.body.classList.contains('sidebar-visible');
+
+        // Calculate the position based on sidebar visibility
+        let middleX;
+        if (isSidebarVisible) {
+            // Position at the center of the visible area (excluding sidebar)
+            // We need to account for the sidebar width in the calculation
+            const visibleAreaWidth = canvas.width - priceScaleWidth;
+            middleX = visibleAreaWidth / 2;
+        } else {
+            // Position at the center when sidebar is hidden
+            const fullWidth = canvas.width - priceScaleWidth;
+            middleX = fullWidth / 2;
+        }
+
+        const buttonWidth = 30;
+        const buttonHeight = 10;
+        const buttonX = middleX - buttonWidth / 2;
+
+        // Log the position for debugging
+        console.log('Depth pane drag button center position:', middleX, 'Sidebar visible:', isSidebarVisible);
+        const buttonY = histogramY - buttonHeight / 2;
+
+        // Draw button background
+        ctx.fillStyle = 'rgba(50, 50, 50, 0.7)';
+        ctx.beginPath();
+        ctx.roundRect(buttonX, buttonY, buttonWidth, buttonHeight, 3);
+        ctx.fill();
+
+        // Draw drag handle icon (three horizontal lines)
+        ctx.strokeStyle = 'rgba(200, 200, 200, 0.8)';
+        ctx.lineWidth = 1;
+
+        // Draw three horizontal lines inside the button
+        for (let i = 0; i < 3; i++) {
+            const lineY = buttonY + 2 + i * 3;
+            ctx.beginPath();
+            ctx.moveTo(buttonX + 5, lineY);
+            ctx.lineTo(buttonX + buttonWidth - 5, lineY);
+            ctx.stroke();
+        }
+
+        // Draw title for the histogram pane
+        ctx.font = 'bold 10px Arial';
+        ctx.fillStyle = '#999';
+        ctx.textAlign = 'left';
+        ctx.fillText(`2.5% Range Depth`, 5, histogramY + 10);
+
+        // Draw the histogram bars
+        const midPoint = histogramWidth / 2;
+        const maxBars = 20; // Maximum 20 bars on each side
+        const barSpacing = 1; // Space between bars
+        const maxBarHeight = histogramHeight - 18; // Leave space for labels
+
+        // Find the maximum value for scaling
+        const maxValue = Math.max(
+            ...bidValues,
+            ...askValues,
+            1000 // Minimum scale to avoid division by zero
+        );
+
+        // Draw bid bars (left side, green)
+        const bidBarWidth = Math.min(2, (histogramWidth/2 - 15) / maxBars - barSpacing);
+        bidValues.forEach((value, index) => {
+            if (index >= maxBars) return; // Only show top 20
+
+            const barHeight = Math.min((value / maxValue) * maxBarHeight, maxBarHeight * 0.9);
+            const x = midPoint - 5 - (index + 1) * (bidBarWidth + barSpacing);
+            const y = histogramY + histogramHeight - 5 - barHeight;
+
+            // Use customizable bid strength color
+            ctx.fillStyle = getColor('bidStrengthColor', 'rgba(38, 166, 154, 0.7)');
+            ctx.fillRect(x, y, bidBarWidth, barHeight);
+        });
+
+        // Draw ask bars (right side, red)
+        const askBarWidth = Math.min(2, (histogramWidth/2 - 15) / maxBars - barSpacing);
+        askValues.forEach((value, index) => {
+            if (index >= maxBars) return; // Only show top 20
+
+            const barHeight = Math.min((value / maxValue) * maxBarHeight, maxBarHeight * 0.9);
+            const x = midPoint + 5 + index * (askBarWidth + barSpacing);
+            const y = histogramY + histogramHeight - 5 - barHeight;
+
+            // Use customizable ask strength color
+            ctx.fillStyle = getColor('askStrengthColor', 'rgba(239, 83, 80, 0.7)');
+            ctx.fillRect(x, y, askBarWidth, barHeight);
+        });
+
+        // Draw divider line at the middle
+        ctx.strokeStyle = 'rgba(150, 150, 150, 0.4)'; // Consistent with other separators
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(midPoint, histogramY + 5);
+        ctx.lineTo(midPoint, histogramY + histogramHeight - 5);
+        ctx.stroke();
+
+        // Draw labels
+        ctx.font = '10px Arial';
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Bids: $${formatNumber(totalBidValue)}`, 5, histogramY + histogramHeight - 5);
+        ctx.textAlign = 'right';
+        ctx.fillText(`Asks: $${formatNumber(totalAskValue)}`, histogramWidth - 5, histogramY + histogramHeight - 5);
+
+        // Draw strength indicator - only show the stronger side
+        const totalValue = totalBidValue + totalAskValue;
+        if (totalValue > 0) {
+            const bidPercentage = Math.round((totalBidValue / totalValue) * 100);
+            const askPercentage = 100 - bidPercentage;
+
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 9px Arial';
+
+            if (bidPercentage > askPercentage) {
+                // Bid pressure is stronger
+                ctx.fillStyle = getColor('bidStrengthColor', 'rgba(38, 166, 154, 0.7)');
+                ctx.fillText(
+                    `2.5%: ${bidPercentage}% Bid ($${formatCompactNumber(totalBidValue)})`,
+                    midPoint,
+                    histogramY + 12
+                );
+            } else if (askPercentage > bidPercentage) {
+                // Ask pressure is stronger
+                ctx.fillStyle = getColor('askStrengthColor', 'rgba(239, 83, 80, 0.7)');
+                ctx.fillText(
+                    `2.5%: ${askPercentage}% Ask ($${formatCompactNumber(totalAskValue)})`,
+                    midPoint,
+                    histogramY + 12
+                );
+            } else {
+                // Equal pressure (50/50)
+                ctx.fillStyle = '#999';
+                ctx.fillText(
+                    `2.5%: 50% Neutral ($${formatCompactNumber(totalValue)})`,
+                    midPoint,
+                    histogramY + 12
+                );
+            }
+        }
+
+        // Restore the context state
+        ctx.restore();
+    }
+
+    // Draw the filtered bid/ask strength histogram (right side of pane)
     function drawBidAskStrengthHistogram() {
         if (!ctx || !canvas) return;
 
         // Check if bid/ask strength histogram is visible
-        if (!isBidAskStrengthVisible) return;
+        if (!isBidAskStrengthVisible) {
+            console.log('Bid/Ask strength histogram is not visible, skipping');
+            return;
+        }
 
-        console.log('Drawing bid/ask strength histogram');
+        // Save the current context state
+        ctx.save();
 
-        // Calculate the total USD value of top 10 bids and asks
+        // Make sure line dash is reset to solid lines
+        ctx.setLineDash([]);
+
+        console.log('Drawing filtered bid/ask strength histogram');
+
+        // Calculate the total USD value of top bids and asks
         let totalBidValue = 0;
         let totalAskValue = 0;
 
-        // Get top 20 bids and asks (increased from 10)
-        const topBids = orderbook.bids ? orderbook.bids.slice(0, 20) : [];
-        const topAsks = orderbook.asks ? orderbook.asks.slice(0, 20) : [];
+        // Get top 20 bids and asks from filtered orderbook
+        // Ensure orderbook is properly initialized
+        if (!orderbook || !orderbook.bids || !orderbook.asks) {
+            console.error('Orderbook not properly initialized for histogram');
+            orderbook = { bids: [], asks: [] };
+        }
+
+        const topBids = orderbook.bids.slice(0, 20);
+        const topAsks = orderbook.asks.slice(0, 20);
 
         // Calculate total values and store individual values for histogram
         const bidValues = [];
@@ -2648,11 +4889,13 @@
         const histogramHeightToUse = histogramHeight; // Always use full height when visible
         const chartHeight = canvas.height - timeScaleHeight - histogramHeightToUse - histogramPaneGap;
         const histogramY = chartHeight;
-        const histogramWidth = canvas.width - priceScaleWidth;
+        const fullWidth = canvas.width - priceScaleWidth;
+        const histogramWidth = fullWidth / 2; // Half width for side-by-side display
+        const rightSideX = histogramWidth; // Starting X position for the right side
 
-        // Draw background for histogram pane (including price scale area)
+        // Draw background for right half of histogram pane only
         ctx.fillStyle = '#131722'; // Dark background
-        ctx.fillRect(0, histogramY, canvas.width, histogramHeight);
+        ctx.fillRect(rightSideX, histogramY, histogramWidth, histogramHeight);
 
         // Draw separator line between histogram and chart
         ctx.strokeStyle = 'rgba(150, 150, 150, 0.4)';
@@ -2670,25 +4913,53 @@
         ctx.lineTo(canvas.width - priceScaleWidth, histogramY + histogramHeight);
         ctx.stroke();
 
-        // Draw resize handle only in the center to avoid a full line across the top
-        ctx.fillStyle = 'rgba(150, 150, 150, 0.3)';
-        ctx.fillRect(histogramWidth / 2 - 40, histogramY, 80, 3);
+        // Draw a subtle drag handle at the top of the histogram pane
+        ctx.fillStyle = 'rgba(100, 100, 100, 0.3)';
+        ctx.fillRect(rightSideX, histogramY, histogramWidth, 3);
 
-        // Then draw a more visible handle in the center
-        ctx.fillStyle = 'rgba(150, 150, 150, 0.7)';
-        ctx.fillRect(histogramWidth / 2 - 40, histogramY, 80, 3);
+        // Draw a drag indicator button in the middle of the pane separator
+        // Check if sidebar is visible
+        const isSidebarVisible = document.body.classList.contains('sidebar-visible');
 
-        // Add drag indicators (three dots)
-        ctx.fillStyle = 'rgba(200, 200, 200, 0.9)';
+        // Calculate the position based on sidebar visibility
+        let middleX;
+        if (isSidebarVisible) {
+            // Position at the center of the visible area (excluding sidebar)
+            // We need to account for the sidebar width in the calculation
+            const visibleAreaWidth = canvas.width - priceScaleWidth;
+            middleX = visibleAreaWidth / 2;
+        } else {
+            // Position at the center when sidebar is hidden
+            const fullWidth = canvas.width - priceScaleWidth;
+            middleX = fullWidth / 2;
+        }
+
+        const buttonWidth = 30;
+        const buttonHeight = 10;
+        const buttonX = middleX - buttonWidth / 2;
+
+        // Log the position for debugging
+        console.log('Filtered depth pane drag button center position:', middleX, 'Sidebar visible:', isSidebarVisible);
+        const buttonY = histogramY - buttonHeight / 2;
+
+        // Draw button background
+        ctx.fillStyle = 'rgba(50, 50, 50, 0.7)';
         ctx.beginPath();
-        ctx.arc(histogramWidth / 2 - 15, histogramY + 1.5, 1.5, 0, Math.PI * 2);
+        ctx.roundRect(buttonX, buttonY, buttonWidth, buttonHeight, 3);
         ctx.fill();
-        ctx.beginPath();
-        ctx.arc(histogramWidth / 2, histogramY + 1.5, 1.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(histogramWidth / 2 + 15, histogramY + 1.5, 1.5, 0, Math.PI * 2);
-        ctx.fill();
+
+        // Draw drag handle icon (three horizontal lines)
+        ctx.strokeStyle = 'rgba(200, 200, 200, 0.8)';
+        ctx.lineWidth = 1;
+
+        // Draw three horizontal lines inside the button
+        for (let i = 0; i < 3; i++) {
+            const lineY = buttonY + 2 + i * 3;
+            ctx.beginPath();
+            ctx.moveTo(buttonX + 5, lineY);
+            ctx.lineTo(buttonX + buttonWidth - 5, lineY);
+            ctx.stroke();
+        }
 
         // Update global variable
         window.histogramHeight = histogramHeight;
@@ -2697,13 +4968,13 @@
         ctx.font = 'bold 10px Arial';
         ctx.fillStyle = '#999';
         ctx.textAlign = 'left';
-        ctx.fillText('Depth', 5, histogramY + 10);
+        ctx.fillText('Filtered Depth', rightSideX + 5, histogramY + 10);
 
         // Draw the histogram bars
-        const midPoint = histogramWidth / 2;
-        const maxBars = 20; // Maximum 20 bars on each side (increased from 10)
-        const barSpacing = 1; // Space between bars (reduced)
-        const maxBarHeight = histogramHeight - 18; // Leave more space for labels with USD values
+        const midPoint = rightSideX + (histogramWidth / 2);
+        const maxBars = 20; // Maximum 20 bars on each side
+        const barSpacing = 1; // Space between bars
+        const maxBarHeight = histogramHeight - 18; // Leave space for labels
 
         // Find the maximum value for scaling
         const maxValue = Math.max(
@@ -2752,9 +5023,46 @@
         ctx.font = '10px Arial';
         ctx.fillStyle = '#fff';
         ctx.textAlign = 'left';
-        ctx.fillText(`Bids: $${formatNumber(totalBidValue)}`, 5, histogramY + histogramHeight - 5);
+        ctx.fillText(`Bids: $${formatNumber(totalBidValue)}`, rightSideX + 5, histogramY + histogramHeight - 5);
         ctx.textAlign = 'right';
-        ctx.fillText(`Asks: $${formatNumber(totalAskValue)}`, histogramWidth - 5, histogramY + histogramHeight - 5);
+        ctx.fillText(`Asks: $${formatNumber(totalAskValue)}`, rightSideX + histogramWidth - 5, histogramY + histogramHeight - 5);
+
+        // Draw strength indicator at the top
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 9px Arial';
+
+        // Calculate total value and percentages
+        const totalValue = totalBidValue + totalAskValue;
+        if (totalValue > 0) {
+            const bidPercentage = Math.round((totalBidValue / totalValue) * 100);
+            const askPercentage = 100 - bidPercentage;
+
+            if (bidPercentage > askPercentage) {
+                // Bid pressure is stronger
+                ctx.fillStyle = getColor('bidStrengthColor', 'rgba(38, 166, 154, 0.7)');
+                ctx.fillText(
+                    `Filtered: ${bidPercentage}% Bid ($${formatCompactNumber(totalBidValue)})`,
+                    midPoint,
+                    histogramY + 12
+                );
+            } else if (askPercentage > bidPercentage) {
+                // Ask pressure is stronger
+                ctx.fillStyle = getColor('askStrengthColor', 'rgba(239, 83, 80, 0.7)');
+                ctx.fillText(
+                    `Filtered: ${askPercentage}% Ask ($${formatCompactNumber(totalAskValue)})`,
+                    midPoint,
+                    histogramY + 12
+                );
+            } else {
+                // Equal pressure (50/50)
+                ctx.fillStyle = '#999';
+                ctx.fillText(
+                    `Filtered: 50% Neutral ($${formatCompactNumber(totalValue)})`,
+                    midPoint,
+                    histogramY + 12
+                );
+            }
+        }
 
         // Draw USD scale on the right side
         // Find the maximum value for the scale
@@ -2776,56 +5084,25 @@
                 ctx.strokeStyle = 'rgba(150, 150, 150, 0.2)';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
-                ctx.moveTo(histogramWidth, y);
+                ctx.moveTo(rightSideX + histogramWidth, y);
                 ctx.lineTo(canvas.width - 5, y);
                 ctx.stroke();
 
                 // Draw scale label
-                ctx.fillText(`$${formatCompactNumber(value)}`, histogramWidth + 5, y + 3);
+                ctx.fillText(`$${formatCompactNumber(value)}`, rightSideX + histogramWidth + 5, y + 3);
             }
         });
 
-        // Draw strength indicator - only show the stronger side
-        const totalValue = totalBidValue + totalAskValue;
-        if (totalValue > 0) {
-            const bidPercentage = Math.round((totalBidValue / totalValue) * 100);
-            const askPercentage = 100 - bidPercentage;
-
-            ctx.textAlign = 'center';
-            ctx.font = 'bold 9px Arial'; // Reduced from 10px to 9px
-
-            if (bidPercentage > askPercentage) {
-                // Bid pressure is stronger
-                ctx.fillStyle = getColor('bidStrengthColor', 'rgba(38, 166, 154, 0.7)');
-                ctx.fillText(
-                    `Bid Pressure: ${bidPercentage}% ($${formatCompactNumber(totalBidValue)})`,
-                    midPoint,
-                    histogramY + 12
-                );
-            } else if (askPercentage > bidPercentage) {
-                // Ask pressure is stronger
-                ctx.fillStyle = getColor('askStrengthColor', 'rgba(239, 83, 80, 0.7)');
-                ctx.fillText(
-                    `Ask Pressure: ${askPercentage}% ($${formatCompactNumber(totalAskValue)})`,
-                    midPoint,
-                    histogramY + 12
-                );
-            } else {
-                // Equal pressure (50/50)
-                ctx.fillStyle = '#999';
-                ctx.fillText(
-                    `Neutral: 50% ($${formatCompactNumber(totalValue)})`,
-                    midPoint,
-                    histogramY + 12
-                );
-            }
-        }
+        // Restore the context state
+        ctx.restore();
     }
 
     // Helper function to format numbers with commas
     function formatNumber(num) {
         return num.toLocaleString('en-US', { maximumFractionDigits: 0 });
     }
+
+
 
     // Helper function to format numbers in a compact way (K, M, B)
     function formatCompactNumber(num) {
@@ -2863,14 +5140,12 @@
 
     // Helper function to update all button positions when histogram height changes
     function updateButtonPositions() {
-        // Find all buttons and UI elements that need to be repositioned
+        // Find all buttons that need to be repositioned
         const buttons = document.querySelectorAll('button[style*="bottom"]');
-        const madeByText = document.querySelector('div[style*="made by lost"]');
         const resetZoomButton = document.getElementById('resetZoomButton');
 
         // Calculate the new bottom position
         const bottomPosition = (timeScaleHeight + histogramHeight + histogramPaneGap + 10) + 'px';
-        const madeByPosition = (timeScaleHeight + histogramHeight + histogramPaneGap + 30) + 'px';
 
         // Update each button's position, excluding the reset zoom button
         buttons.forEach(button => {
@@ -2883,11 +5158,6 @@
             }
         });
 
-        // Update the 'made by lost' text position
-        if (madeByText) {
-            madeByText.style.bottom = madeByPosition;
-        }
-
         // Don't update the color customizer button position - it should stay in the sidebar
         // The code below is commented out to prevent the button from being moved out of the sidebar
         /*
@@ -2899,9 +5169,168 @@
         */
     }
 
-    function drawHeatmapLine(price, dollarValue, color, maxDollarValue) {
+    // Variables for line interaction
+    let hoveredLine = null;
+    let hoveredEndpoint = null; // 'start' or 'end' to indicate which endpoint is hovered
+    let mouseHasMoved = false; // Track if mouse has moved since mouse down
 
+    // Function to draw all user-drawn lines
+    function drawLines() {
+        if (!ctx || !canvas) return;
+
+        // Reset hovered line state
+        hoveredLine = null;
+        hoveredEndpoint = null;
+
+        // Set cursor based on current state
+        if (isDrawingLine || isLineDrawingMode || isDragging) {
+            // Always use plus sign cursor when drawing lines or dragging the chart
+            canvas.classList.add('cursor-plus');
+        } else {
+            // Keep plus sign cursor when over chart area
+            if (mouseX !== null && mouseY !== null && mouseX < canvas.width - priceScaleWidth) {
+                canvas.classList.add('cursor-plus');
+            } else {
+                canvas.style.cursor = 'default';
+                canvas.classList.remove('cursor-plus');
+            }
+        }
+
+        // Draw all saved lines
+        if (lines.length > 0) {
+            // Set line style
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = getColor('lineColor', '#2196F3'); // Use custom color from color customizer
+            ctx.setLineDash([]); // Solid line
+
+            lines.forEach((line, index) => {
+                // Calculate X positions based on bar index to handle horizontal scrolling correctly
+                const startX = (line.startBarIndex - viewOffset) * barWidth + barWidth / 2;
+                const endX = (line.endBarIndex - viewOffset) * barWidth + barWidth / 2;
+
+                // Calculate Y positions based on stored prices to handle zooming/panning correctly
+                const startY = getYForPrice(line.startPrice);
+                const endY = getYForPrice(line.endPrice);
+
+                // Check if line is visible on screen
+                const isVisible = (
+                    (startX >= 0 && startX <= canvas.width - priceScaleWidth) ||
+                    (endX >= 0 && endX <= canvas.width - priceScaleWidth)
+                );
+
+                if (isVisible) {
+                    // Draw the line
+                    ctx.beginPath();
+                    ctx.moveTo(startX, startY);
+                    ctx.lineTo(endX, endY);
+                    ctx.stroke();
+
+                    // Check if mouse is hovering over this line
+                    if (mouseX !== null && mouseY !== null && !isDrawingLine && !isDragging) {
+                        // Check for endpoint hover first (higher priority)
+                        const endpointRadius = 5;
+                        const startDistance = Math.sqrt((mouseX - startX) ** 2 + (mouseY - startY) ** 2);
+                        const endDistance = Math.sqrt((mouseX - endX) ** 2 + (mouseY - endY) ** 2);
+
+                        if (startDistance <= endpointRadius) {
+                            // Hovering over start endpoint
+                            hoveredLine = {
+                                index: index,
+                                line: line,
+                                startX: startX,
+                                startY: startY,
+                                endX: endX,
+                                endY: endY
+                            };
+                            hoveredEndpoint = 'start';
+                        } else if (endDistance <= endpointRadius) {
+                            // Hovering over end endpoint
+                            hoveredLine = {
+                                index: index,
+                                line: line,
+                                startX: startX,
+                                startY: startY,
+                                endX: endX,
+                                endY: endY
+                            };
+                            hoveredEndpoint = 'end';
+                        } else {
+                            // Check if hovering over the line itself
+                            const distance = distanceToLine(mouseX, mouseY, startX, startY, endX, endY);
+                            if (distance < 5) { // 5px threshold for hover detection
+                                hoveredLine = {
+                                    index: index,
+                                    line: line,
+                                    startX: startX,
+                                    startY: startY,
+                                    endX: endX,
+                                    endY: endY
+                                };
+                            }
+                        }
+
+                        // If this line is hovered, highlight it and draw endpoints
+                        if (hoveredLine && hoveredLine.index === index) {
+                            // Highlight the hovered line
+                            ctx.lineWidth = 3;
+                            ctx.strokeStyle = getColor('lineHighlightColor', '#4CAF50'); // Use custom highlight color
+                            ctx.beginPath();
+                            ctx.moveTo(startX, startY);
+                            ctx.lineTo(endX, endY);
+                            ctx.stroke();
+
+                            // Draw endpoint dots
+                            ctx.fillStyle = hoveredEndpoint === 'start' ?
+                                getColor('hoveredEndpointColor', '#FF5722') :
+                                getColor('endpointColor', '#4CAF50');
+                            ctx.beginPath();
+                            ctx.arc(startX, startY, 5, 0, Math.PI * 2);
+                            ctx.fill();
+
+                            ctx.fillStyle = hoveredEndpoint === 'end' ?
+                                getColor('hoveredEndpointColor', '#FF5722') :
+                                getColor('endpointColor', '#4CAF50');
+                            ctx.beginPath();
+                            ctx.arc(endX, endY, 5, 0, Math.PI * 2);
+                            ctx.fill();
+
+                            // Set cursor style based on what's being hovered
+                            if (hoveredEndpoint) {
+                                canvas.style.cursor = 'move'; // Show move cursor for endpoints
+                            } else {
+                                canvas.style.cursor = 'pointer'; // Show pointer for line body
+                            }
+
+                            // Reset styles
+                            ctx.lineWidth = 2;
+                            ctx.strokeStyle = getColor('lineColor', '#2196F3');
+                        }
+                    }
+                }
+            });
+        }
+
+        // Draw the line currently being drawn
+        if (isDrawingLine && currentLine) {
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = getColor('lineColor', '#2196F3'); // Use custom color for the line being drawn
+            ctx.setLineDash([5, 5]); // Dashed line while drawing
+
+            // Draw the line
+            ctx.beginPath();
+            ctx.moveTo(currentLine.startX, currentLine.startY);
+            ctx.lineTo(currentLine.endX, currentLine.endY);
+            ctx.stroke();
+
+            // Reset line dash
+            ctx.setLineDash([]);
+        }
+    }
+
+    function drawHeatmapLine(price, dollarValue, color, maxDollarValue) {
+        // Only process if price is within visible range
         if (price >= minPrice && price <= maxPrice) {
+            // Calculate exact Y position for the price
             const y = getYForPrice(price);
             if (!isFinite(y)) return;
 
@@ -2914,7 +5343,7 @@
             if (dollarValue < minDollarValue) return;
 
             // Calculate line width based on dollar value relative to max dollar value
-            // Use a more aggressive power curve (^3 instead of ^2) for better contrast
+            // Use a more aggressive power curve for better contrast between small and large orders
             const valueRatio = Math.min(1, dollarValue / maxDollarValue);
 
             // Make smaller lines thinner and bigger lines thicker
@@ -2924,47 +5353,245 @@
             // Use cubic power for more dramatic contrast between small and large orders
             const lineWidth = minLineWidth + Math.pow(valueRatio, 2) * (maxLineWidth - minLineWidth);
 
+            // Ensure pixel-perfect alignment for crisp lines
+            const roundedY = Math.round(y) + 0.5; // Add 0.5 for crisp 1px lines
+
+            // Draw the line with the calculated width and color
             ctx.strokeStyle = color;
             ctx.lineWidth = lineWidth;
             ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(canvas.width - priceScaleWidth, y); // Extend to price scale edge
+            ctx.moveTo(0, roundedY);
+            ctx.lineTo(canvas.width - priceScaleWidth, roundedY); // Extend to price scale edge
             ctx.stroke();
         }
     }
 
+    // Function to draw the measurement tool
+    function drawMeasurementTool() {
+        if (!ctx || !canvas || !measurementStart || !measurementEnd) return;
+
+        // Calculate percentage change
+        const startPrice = measurementStart.price;
+        const endPrice = measurementEnd.price;
+
+        if (!startPrice || !endPrice) return;
+
+        const priceDiff = endPrice - startPrice;
+        const percentChange = (priceDiff / startPrice) * 100;
+
+        // Get bullish and bearish candle colors from color customizer
+        const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+        const bearishColor = getColor('bearishCandleBody', getColor('bearishCandle', '#ef5350'));
+
+        // Convert hex to rgba with full opacity
+        const bullishRgba = bullishColor.startsWith('#') ?
+            `rgba(${parseInt(bullishColor.slice(1, 3), 16)}, ${parseInt(bullishColor.slice(3, 5), 16)}, ${parseInt(bullishColor.slice(5, 7), 16)}, 1.0)` :
+            bullishColor;
+        const bearishRgba = bearishColor.startsWith('#') ?
+            `rgba(${parseInt(bearishColor.slice(1, 3), 16)}, ${parseInt(bearishColor.slice(3, 5), 16)}, ${parseInt(bearishColor.slice(5, 7), 16)}, 1.0)` :
+            bearishColor;
+
+        // Draw the measurement line
+        ctx.save();
+
+        // Set line style
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = percentChange >= 0 ? bullishRgba : bearishRgba;
+        ctx.setLineDash([5, 5]); // Dashed line
+
+        // Draw the line
+        ctx.beginPath();
+        ctx.moveTo(measurementStart.x, measurementStart.y);
+        ctx.lineTo(measurementEnd.x, measurementEnd.y);
+        ctx.stroke();
+
+        // Reset line dash
+        ctx.setLineDash([]);
+
+        // Draw dots at the endpoints
+        const dotRadius = 4;
+
+        // Start point dot
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(measurementStart.x, measurementStart.y, dotRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = percentChange >= 0 ? bullishRgba : bearishRgba;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(measurementStart.x, measurementStart.y, dotRadius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // End point dot
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(measurementEnd.x, measurementEnd.y, dotRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = percentChange >= 0 ? bullishRgba : bearishRgba;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(measurementEnd.x, measurementEnd.y, dotRadius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Draw the percentage label
+        const labelX = (measurementStart.x + measurementEnd.x) / 2;
+        const labelY = (measurementStart.y + measurementEnd.y) / 2;
+
+        // Format the percentage
+        const formattedPercent = percentChange.toFixed(2);
+        const percentText = `${formattedPercent}%`;
+
+        // Draw label background
+        ctx.font = 'bold 12px Arial';
+        const textWidth = ctx.measureText(percentText).width;
+        const padding = 6;
+        const bgWidth = textWidth + padding * 2;
+        const bgHeight = 20;
+
+        // Create solid color versions for the background (no transparency)
+        const bullishBgRgba = bullishColor.startsWith('#') ?
+            `rgba(${parseInt(bullishColor.slice(1, 3), 16)}, ${parseInt(bullishColor.slice(3, 5), 16)}, ${parseInt(bullishColor.slice(5, 7), 16)}, 1.0)` :
+            bullishColor;
+        const bearishBgRgba = bearishColor.startsWith('#') ?
+            `rgba(${parseInt(bearishColor.slice(1, 3), 16)}, ${parseInt(bearishColor.slice(3, 5), 16)}, ${parseInt(bearishColor.slice(5, 7), 16)}, 1.0)` :
+            bearishColor;
+
+        // Use the bullish/bearish colors for the background
+        ctx.fillStyle = percentChange >= 0 ? bullishBgRgba : bearishBgRgba;
+        ctx.fillRect(labelX - bgWidth / 2, labelY - bgHeight / 2, bgWidth, bgHeight);
+
+        // Draw label text
+        // Use black text for bright backgrounds, white text for dark backgrounds
+        const bgColor = percentChange >= 0 ? bullishColor : bearishColor;
+        const textColor = isBrightColor(bgColor) ? 'black' : 'white';
+        console.log('Setting measurement text color:', textColor, 'for background color:', bgColor);
+        ctx.fillStyle = textColor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(percentText, labelX, labelY);
+
+        // Draw price labels at each endpoint
+        ctx.font = '10px Arial';
+
+        // Start price label
+        const startPriceText = startPrice.toFixed(2);
+        ctx.fillStyle = 'rgba(0, 0, 0, 1.0)';
+        ctx.fillText(startPriceText, measurementStart.x, measurementStart.y - 15);
+        ctx.fillStyle = 'white';
+        ctx.fillText(startPriceText, measurementStart.x, measurementStart.y - 16);
+
+        // End price label
+        const endPriceText = endPrice.toFixed(2);
+        ctx.fillStyle = 'rgba(0, 0, 0, 1.0)';
+        ctx.fillText(endPriceText, measurementEnd.x, measurementEnd.y - 15);
+        ctx.fillStyle = 'white';
+        ctx.fillText(endPriceText, measurementEnd.x, measurementEnd.y - 16);
+
+        // If not actively measuring, clear the measurement after a delay
+        if (!isMeasuring) {
+            if (!window.measurementClearTimeout) {
+                window.measurementClearTimeout = setTimeout(() => {
+                    measurementStart = null;
+                    measurementEnd = null;
+                    window.measurementClearTimeout = null;
+                    drawChart();
+                }, 3000); // Clear after 3 seconds
+            }
+        } else if (window.measurementClearTimeout) {
+            // If we're measuring again, clear any existing timeout
+            clearTimeout(window.measurementClearTimeout);
+            window.measurementClearTimeout = null;
+        }
+
+        ctx.restore();
+    }
+
     function drawVwap() {
-        if (!ctx || !canvas || !isVwapVisible) return;
+        // Early return if VWAP is not visible or canvas is not available
+        if (!ctx || !canvas) {
+            console.error('Canvas or context not available for VWAP');
+            return;
+        }
 
-        const startIndex = Math.max(0, Math.floor(viewOffset));
-        const endIndex = Math.min(bars.length, startIndex + Math.ceil(visibleBars));
+        // Check if VWAP is visible
+        if (!isVwapVisible) {
+            console.log('VWAP is not visible, skipping drawVwap');
+            return;
+        }
 
-        if (startIndex >= endIndex) return;
+        // Make sure VWAP is initialized if needed
+        if (!vwapData || vwapData.startTime === 0 || !vwapData.points || vwapData.points.length === 0) {
+            console.log('VWAP data not initialized or empty, initializing...');
+            try {
+                initializeVwapPeriod();
 
-        // Find visible time range
-        const startTime = bars[startIndex].time;
-        const endTime = bars[endIndex - 1].time;
+                // Process historical bars to populate VWAP data
+                if (bars && bars.length > 0) {
+                    console.log(`Processing ${bars.length} bars for VWAP initialization`);
+                    bars.forEach(bar => {
+                        if (isInCurrentVwapPeriod(bar.time)) {
+                            // Historical bars are considered closed
+                            updateVwap(bar, true);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error initializing VWAP:', error);
+                return;
+            }
+        }
+
+        console.log('Drawing VWAP with', vwapData.points.length, 'points');
+
+        try {
+            // Save the current context state
+            ctx.save();
+
+            // Make sure line dash is reset to solid lines
+            ctx.setLineDash([]);
+
+            // Check if we have bars data
+            if (!bars || bars.length === 0) {
+                console.log('No bars data available for VWAP');
+                ctx.restore(); // Make sure to restore context before returning
+                return;
+            }
+
+            const startIndex = Math.max(0, Math.floor(viewOffset));
+            const endIndex = Math.min(bars.length, startIndex + Math.ceil(visibleBars));
+
+            if (startIndex >= endIndex) {
+                console.log('Invalid index range for VWAP');
+                ctx.restore(); // Make sure to restore context before returning
+                return;
+            }
+
+            // Find visible time range
+            const startTime = bars[startIndex].time;
+            const endTime = bars[endIndex - 1].time;
 
         // Draw current day's VWAP if available
-        if (vwapData.points && vwapData.points.length > 0) {
-            const vwapColor = getColor('vwapLine', 'rgba(255, 215, 0, 0.8)');
+            if (vwapData.points && vwapData.points.length > 0) {
+                const vwapColor = getColor('vwapLine', 'rgba(255, 215, 0, 0.8)');
 
-            // Get VWAP bands color and apply custom opacity if available
-            let vwapBandsColor = getColor('vwapBands', 'rgba(255, 215, 0, 0.3)');
+                // Get VWAP bands color and apply custom opacity if available
+                let vwapBandsColor = getColor('vwapBands', 'rgba(255, 215, 0, 0.3)');
 
-            // Apply custom opacity if available
-            if (window.colorCustomizer && window.colorCustomizer.opacitySettings &&
-                window.colorCustomizer.opacitySettings.vwapBandsOpacity !== undefined) {
-                // Extract the RGB components from the current color
-                const rgbaMatch = vwapBandsColor.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
-                if (rgbaMatch) {
-                    const r = parseInt(rgbaMatch[1]);
-                    const g = parseInt(rgbaMatch[2]);
-                    const b = parseInt(rgbaMatch[3]);
-                    // Apply the custom opacity
-                    vwapBandsColor = `rgba(${r}, ${g}, ${b}, ${window.colorCustomizer.opacitySettings.vwapBandsOpacity})`;
+                // Apply custom opacity if available
+                if (window.colorCustomizer && window.colorCustomizer.opacitySettings &&
+                    window.colorCustomizer.opacitySettings.vwapBandsOpacity !== undefined) {
+                    // Extract the RGB components from the current color
+                    const rgbaMatch = vwapBandsColor.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
+                    if (rgbaMatch) {
+                        const r = parseInt(rgbaMatch[1]);
+                        const g = parseInt(rgbaMatch[2]);
+                        const b = parseInt(rgbaMatch[3]);
+                        // Apply the custom opacity
+                        vwapBandsColor = `rgba(${r}, ${g}, ${b}, ${window.colorCustomizer.opacitySettings.vwapBandsOpacity})`;
+                    }
                 }
-            }
 
             // Create a copy of the points array to extend to the current time
             const extendedPoints = [...vwapData.points];
@@ -2987,6 +5614,10 @@
                 }
             }
 
+            // Calculate barWidth for VWAP drawing
+            const chartWidth = canvas.width - priceScaleWidth;
+            const currentBarWidth = chartWidth / visibleBars;
+
             drawVwapLine(
                 extendedPoints, // Use the extended points array
                 startTime,
@@ -2996,15 +5627,396 @@
                 vwapColor, // Use customized color for current day
                 2,
                 vwapBandsColor, // Use customized color for bands with custom opacity
-                false // This is current day's VWAP
+                false, // This is current day's VWAP
+                currentBarWidth // Pass the calculated barWidth
             );
+            }
+        } catch (error) {
+            console.error('Error in drawVwap:', error);
+            // Make sure to restore context even if there's an error
+            ctx.restore();
         }
     }
 
-    // drawVolumeProfile function removed
+    function drawVolumeProfile() {
+        console.log('drawVolumeProfile called:', {
+            hasContext: !!ctx,
+            hasCanvas: !!canvas,
+            isVolumeProfileVisible,
+            pricePointsLength: volumeProfileData.pricePoints.length
+        });
+
+        if (!ctx || !canvas) {
+            console.error('Missing canvas or context for volume profile');
+            return;
+        }
+
+        if (!isVolumeProfileVisible) {
+            console.log('Volume profile is not visible, skipping drawVolumeProfile');
+            return;
+        }
+
+        // Make sure we have a valid canvas size
+        if (canvas.width <= 0 || canvas.height <= 0) {
+            console.error('Invalid canvas dimensions for volume profile');
+            return;
+        }
+
+        // Check if we're zoomed in too much - hide volume profile when zoom level is too high
+        // This prevents the red line issue in the top left when zoomed in
+        if (visibleBars < 10) { // If we're showing fewer than 10 bars, we're zoomed in too much
+            console.log('Zoom level too high, hiding volume profile');
+            return;
+        }
+
+        // If volume profile data is empty, calculate it
+        if (volumeProfileData.pricePoints.length === 0) {
+            console.log('Volume profile data is empty, calculating...');
+            calculateVolumeProfile();
+            // If still empty after calculation, return
+            if (volumeProfileData.pricePoints.length === 0) {
+                console.log('Failed to calculate volume profile data');
+                return;
+            }
+        }
+
+        // Get settings from color customizer if available
+        const settings = window.colorCustomizer ? window.colorCustomizer.volumeProfileSettings : null;
+
+        // Get customizable colors from color customizer
+        let volumeProfileColor, pocColor, pocBarColor, valueAreaHighColor, valueAreaLowColor, vahLineColor, valLineColor;
+
+        if (window.colorCustomizer && window.colorCustomizer.colors) {
+            // Get colors from the main colors object
+            volumeProfileColor = window.colorCustomizer.colors.volumeProfileColor || 'rgba(100, 149, 237, 0.6)';
+            pocColor = window.colorCustomizer.colors.pocColor || 'rgba(255, 165, 0, 0.9)';
+            pocBarColor = window.colorCustomizer.colors.pocBarColor || 'rgba(255, 165, 0, 0.7)';
+            valueAreaHighColor = window.colorCustomizer.colors.valueAreaHighColor || 'rgba(46, 204, 113, 0.7)';
+            valueAreaLowColor = window.colorCustomizer.colors.valueAreaLowColor || 'rgba(231, 76, 60, 0.7)';
+            vahLineColor = window.colorCustomizer.colors.vahLineColor || 'rgba(46, 204, 113, 0.9)';
+            valLineColor = window.colorCustomizer.colors.valLineColor || 'rgba(231, 76, 60, 0.9)';
+        } else {
+            // TradingView-style colors
+            volumeProfileColor = 'rgba(118, 118, 118, 0.5)'; // Neutral gray like TradingView
+            pocColor = 'rgba(255, 235, 59, 0.9)'; // Yellow for POC line
+            pocBarColor = 'rgba(255, 235, 59, 0.9)'; // Yellow for POC bar
+            valueAreaHighColor = 'rgba(118, 118, 118, 0.7)'; // Same as volume profile but more opaque
+            valueAreaLowColor = 'rgba(118, 118, 118, 0.7)'; // Same as volume profile but more opaque
+            vahLineColor = 'rgba(76, 175, 80, 0.9)'; // Green for VAH line
+            valLineColor = 'rgba(244, 67, 54, 0.9)'; // Red for VAL line
+        }
+
+        console.log('Volume profile colors:', { volumeProfileColor, pocColor, pocBarColor, valueAreaHighColor, valueAreaLowColor, vahLineColor, valLineColor });
+
+        // Get display options
+        const showPocLine = settings && settings.showPocLine !== undefined ? settings.showPocLine : true;
+        const showValueAreaHighLine = settings && settings.showValueAreaHighLine !== undefined ? settings.showValueAreaHighLine : true;
+        const showValueAreaLowLine = settings && settings.showValueAreaLowLine !== undefined ? settings.showValueAreaLowLine : true;
+
+        console.log('Volume profile display options:', { showPocLine, showValueAreaHighLine, showValueAreaLowLine });
+
+        // No longer using bullish and bearish colors for volume profile
+
+        // Calculate the width of the volume profile - smaller but still unconstrained
+        // Allow it to use as much space as needed for high volume zones while taking less space overall
+        const profileWidth = Math.min(canvas.width * 0.08, 80); // Smaller base width
+        // We'll still allow bars to extend beyond this width when needed
+
+        // Position the profile on the left side of the chart
+        const profileX = 0;
+
+        // Calculate the chart height (excluding time scale and histogram if visible)
+        const chartHeight = canvas.height - timeScaleHeight - (isBidAskStrengthVisible ? histogramHeight + histogramPaneGap : 0);
+
+        console.log('Drawing volume profile with chartHeight:', chartHeight);
+
+        // Save context state
+        ctx.save();
+
+        // Set clipping region to prevent drawing outside the chart area and interfering with other elements
+        // Make the clipping region much wider to ensure no bars are cut off
+        ctx.beginPath();
+        // Use a very wide clipping region - 3x the profile width to ensure no constraints
+        ctx.rect(0, 0, profileWidth * 3, chartHeight);
+        ctx.clip();
+
+        // No background for the volume profile area as requested
+
+        ctx.lineWidth = 1;
+        // Make sure line dash is reset to solid lines
+        ctx.setLineDash([]);
+
+        // We'll draw the VAH, VAL, and POC lines after restoring the context
+        // to ensure they extend fully across the chart
+
+        ctx.setLineDash([]);
+
+        // Group price points into rows matching the number of 5-minute bars (864 for 3 days)
+        // This ensures each row corresponds to a specific time period
+        const priceRange = maxPrice - minPrice;
+        const numRows = 864; // Exactly 864 rows to match the 3 days of 5-minute bars
+        const rowHeight = chartHeight / numRows;
+        const priceStep = priceRange / numRows;
+
+        // Create buckets for the grouped price points
+        const volumeBuckets = new Array(numRows).fill(0);
+        const bucketPrices = new Array(numRows).fill(0);
+
+        // Distribute volume data into buckets
+        volumeProfileData.pricePoints.forEach(point => {
+            const bucketIndex = Math.min(numRows - 1, Math.floor((point.price - minPrice) / priceStep));
+            if (bucketIndex >= 0 && bucketIndex < numRows) {
+                volumeBuckets[bucketIndex] += point.volume;
+                // Keep track of the price for each bucket (weighted average)
+                bucketPrices[bucketIndex] = bucketPrices[bucketIndex] === 0 ?
+                    point.price : (bucketPrices[bucketIndex] + point.price) / 2;
+            }
+        });
+
+        // Find max volume in buckets for scaling
+        const maxBucketVolume = Math.max(...volumeBuckets);
+
+        // Log volume bucket statistics for debugging
+        const nonZeroBuckets = volumeBuckets.filter(vol => vol > 0).length;
+        console.log('Volume bucket statistics:', {
+            maxVolume: maxBucketVolume,
+            totalBuckets: volumeBuckets.length,
+            nonZeroBuckets,
+            percentFilled: ((nonZeroBuckets / volumeBuckets.length) * 100).toFixed(2) + '%',
+            sampleVolumes: volumeBuckets.filter(vol => vol > 0).slice(0, 5)
+        });
+
+        // Find POC bucket based on the stored POC price, not just the max volume bucket
+        // This ensures consistency with the calculated POC
+        let pocBucketIndex = -1;
+
+        if (volumeProfileData.poc > 0) {
+            // Find the bucket that contains the POC price
+            const pocPrice = volumeProfileData.poc;
+            // Calculate which bucket should contain the POC price
+            pocBucketIndex = Math.min(numRows - 1, Math.floor((pocPrice - minPrice) / priceStep));
+
+            // Verify this bucket has volume - if not, fall back to max volume bucket
+            if (pocBucketIndex < 0 || pocBucketIndex >= volumeBuckets.length || volumeBuckets[pocBucketIndex] === 0) {
+                console.log('POC bucket has no volume, falling back to max volume bucket');
+                pocBucketIndex = volumeBuckets.indexOf(Math.max(...volumeBuckets));
+            }
+        } else {
+            // If no POC is stored, use the max volume bucket
+            pocBucketIndex = volumeBuckets.indexOf(Math.max(...volumeBuckets));
+        }
+
+        // Log volume bucket statistics for debugging
+        console.log('About to draw volume profile bars:', {
+            numBuckets: volumeBuckets.length,
+            nonZeroBuckets: volumeBuckets.filter(vol => vol > 0).length,
+            maxVolume: maxBucketVolume,
+            profileWidth,
+            rowHeight
+        });
+
+        // Draw volume profile bars as vertical bars
+        volumeBuckets.forEach((volume, index) => {
+            if (volume === 0) return; // Skip empty buckets
+
+            // Calculate bar position and dimensions
+            const barY = chartHeight - (index + 1) * rowHeight;
+            const barHeight = rowHeight;
+
+            // Skip bars that are outside the visible chart area
+            if (barY + barHeight < 0 || barY > chartHeight) {
+                return; // Bar is not visible, skip drawing it
+            }
+
+            // Calculate the price for this bucket
+            const bucketPrice = minPrice + (index + 0.5) * priceStep;
+
+            // Determine if this is the POC
+            const isPOC = index === pocBucketIndex;
+
+            // Skip POC highlighting if POC is outside the visible price range
+            const isPOCVisible = volumeProfileData.poc >= minPrice && volumeProfileData.poc <= maxPrice;
+
+            // Determine if this is above VAH, below VAL, or in the value area
+            // Also check if VAH and VAL are within the visible price range
+            const isVAHVisible = volumeProfileData.valueAreaHigh >= minPrice && volumeProfileData.valueAreaHigh <= maxPrice;
+            const isVALVisible = volumeProfileData.valueAreaLow >= minPrice && volumeProfileData.valueAreaLow <= maxPrice;
+
+            const isAboveVAH = bucketPrice > volumeProfileData.valueAreaHigh;
+            const isBelowVAL = bucketPrice < volumeProfileData.valueAreaLow;
+
+            // Set color based on position relative to value area and POC
+            let barColor;
+            if (isPOC && isPOCVisible) {
+                // POC gets its own bar color, but only if it's within the visible price range
+                barColor = pocBarColor;
+            } else if (isAboveVAH && isVAHVisible) {
+                // Above Value Area High - use VAH color, but only if VAH is visible
+                barColor = valueAreaHighColor;
+            } else if (isBelowVAL && isVALVisible) {
+                // Below Value Area Low - use VAL color, but only if VAL is visible
+                barColor = valueAreaLowColor;
+            } else {
+                // In value area - use volume profile color
+                barColor = volumeProfileColor;
+            }
+
+            // Draw the bar with a minimum width to ensure visibility
+            ctx.fillStyle = barColor;
+
+            // Completely unconstrained volume profile bars
+            // Use a linear scale for direct volume representation
+            // This ensures high volume zones can expand as much as needed
+
+            // Calculate bar width as a direct proportion of the max volume
+            // No power scaling or artificial constraints
+            const volumeRatio = volume / maxBucketVolume;
+
+            // Apply a moderate scale factor for the base size, but allow expansion for high volume
+            const scaleFactor = 1.5; // Smaller base scale factor for a more compact profile
+            // For high volume bars, we'll apply an additional multiplier
+
+            // Calculate the bar width with a base scale factor
+            let visibleBarWidth = profileWidth * volumeRatio * scaleFactor;
+
+            // Special handling for high volume bars - allow them to expand beyond the base width
+            if (volumeRatio > 0.5) { // If this is a high volume bar (>50% of max)
+                // Apply an additional multiplier that increases with volume
+                const expansionFactor = 1.0 + (volumeRatio - 0.5) * 2.0; // Ranges from 1.0 to 2.0
+                visibleBarWidth *= expansionFactor;
+            }
+
+            // For low volume bars, use a minimum width
+            // This ensures they're still visible but don't take up much space
+            const minWidth = 0.5; // Minimum width for visibility
+            const finalBarWidth = Math.max(minWidth, visibleBarWidth);
+
+            // Log the width calculation for debugging high volume bars
+            if (volumeRatio > 0.8) { // If this is a high volume bar (>80% of max)
+                console.log(`High volume bar: ratio=${volumeRatio.toFixed(2)}, width=${finalBarWidth.toFixed(1)}px, max=${profileWidth * scaleFactor}px`);
+            }
+
+            // Draw the bar without a border (TradingView style)
+            ctx.fillRect(profileX, barY, finalBarWidth, barHeight);
+
+            // No border for TradingView-like clean appearance
+
+            // Log the first few bars for debugging
+            if (index < 5 && volume > 0) {
+                console.log(`Bar ${index}: volume=${volume}, width=${finalBarWidth}, y=${barY}, height=${barHeight}`);
+            }
+
+            // Add highlight for POC - TradingView style
+            if (isPOC && isPOCVisible) {
+                // TradingView uses a different color for POC without borders
+                ctx.fillStyle = pocBarColor; // Yellow for POC
+
+                // Make POC bar slightly wider to ensure it stands out
+                // For POC, we want it to be at least 20% wider than calculated
+                const pocExtraWidth = Math.max(5, finalBarWidth * 0.2); // At least 5px or 20% wider
+                ctx.fillRect(profileX, barY, finalBarWidth + pocExtraWidth, barHeight);
+
+                // No border in TradingView style
+            }
+        });
+
+        // Restore context to ensure we're not limited by the clipping region
+        ctx.restore();
+
+        // Now draw all the lines after restoring context to ensure they extend fully
+
+        // Check if we're zoomed in too much - hide lines when zoom level is too high
+        // This prevents the red line issue in the top left when zoomed in
+        const isZoomedInTooMuch = visibleBars < 10;
+
+        // Value Area High line - TradingView style
+        if (showValueAreaHighLine && !isZoomedInTooMuch && volumeProfileData.valueAreaHigh) {
+            // Check if VAH price is within the visible price range
+            if (volumeProfileData.valueAreaHigh >= minPrice && volumeProfileData.valueAreaHigh <= maxPrice) {
+                const valueAreaHighY = getYForPrice(volumeProfileData.valueAreaHigh);
+
+                // Use the vahLineColor for VAH line
+                ctx.strokeStyle = vahLineColor;
+                ctx.setLineDash([]); // Solid line as requested
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(0, valueAreaHighY);
+                ctx.lineTo(canvas.width - priceScaleWidth, valueAreaHighY);
+                ctx.stroke();
+
+                // No VAH label as requested
+            }
+        }
+
+        // Value Area Low line - TradingView style
+        if (showValueAreaLowLine && !isZoomedInTooMuch && volumeProfileData.valueAreaLow) {
+            // Check if VAL price is within the visible price range
+            if (volumeProfileData.valueAreaLow >= minPrice && volumeProfileData.valueAreaLow <= maxPrice) {
+                const valueAreaLowY = getYForPrice(volumeProfileData.valueAreaLow);
+
+                // Use the valLineColor for VAL line
+                ctx.strokeStyle = valLineColor;
+                ctx.setLineDash([]); // Solid line as requested
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(0, valueAreaLowY);
+                ctx.lineTo(canvas.width - priceScaleWidth, valueAreaLowY);
+                ctx.stroke();
+
+                // No VAL label as requested
+            }
+        }
+
+        // Draw POC price line across the entire chart - TradingView style
+        if (showPocLine && !isZoomedInTooMuch && volumeProfileData.poc) {
+            // Check if POC price is within the visible price range
+            if (volumeProfileData.poc >= minPrice && volumeProfileData.poc <= maxPrice) {
+                const pocY = getYForPrice(volumeProfileData.poc);
+
+                // Draw a solid line for POC across the entire chart
+                ctx.strokeStyle = pocColor;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([]); // Solid line as requested
+                ctx.beginPath();
+                ctx.moveTo(0, pocY);
+                ctx.lineTo(canvas.width - priceScaleWidth, pocY);
+                ctx.stroke();
+
+                // No POC label as requested
+            }
+
+            // Reset line dash
+            ctx.setLineDash([]);
+        }
+
+        // Add a label for the volume profile - TradingView style
+        ctx.font = '10px Arial'; // Not bold in TradingView
+        ctx.fillStyle = 'rgba(150, 150, 150, 0.9)'; // Subtle gray like TradingView
+        ctx.textAlign = 'center';
+        // Get lookback days from settings or use default
+        const lookbackDays = settings ? settings.lookbackDays : 3;
+        ctx.fillText(`${lookbackDays}D Volume Profile`, profileX + profileWidth/2, 15);
+
+        // Make sure to reset any context changes before restoring
+        ctx.setLineDash([]);
+
+        // Log before restoring context
+        console.log('Volume profile drawing complete, about to restore context');
+
+        // Restore context to ensure clean state for subsequent drawing operations
+        ctx.restore();
+
+        console.log('Context restored after volume profile drawing');
+    }
 
     // Helper function to draw a VWAP line with standard deviation bands
-    function drawVwapLine(points, startTime, endTime, startIndex, endIndex, lineColor, lineWidth, bandColor, isPreviousDay = false) {
+    function drawVwapLine(points, startTime, endTime, startIndex, endIndex, lineColor, lineWidth, bandColor, isPreviousDay = false, currentBarWidth) {
+        // Check if we have valid points
+        if (!points || points.length === 0) {
+            console.log('No points available for VWAP line');
+            return;
+        }
+
         // Apply opacity setting to band color if it's not already applied
         if (window.colorCustomizer && window.colorCustomizer.opacitySettings &&
             window.colorCustomizer.opacitySettings.vwapBandsOpacity !== undefined) {
@@ -3061,7 +6073,7 @@
 
             // No need to log every time opacity is applied
         }
-        const chartWidth = canvas.width - priceScaleWidth;
+        // We'll calculate the tag position later
 
         // Find visible VWAP points
         const visiblePoints = points.filter(point =>
@@ -3094,7 +6106,7 @@
 
             ctx.beginPath();
 
-            const firstX = (firstPointIndex - viewOffset) * barWidth + barWidth / 2;
+            const firstX = (firstPointIndex - viewOffset) * currentBarWidth + currentBarWidth / 2;
             const firstUpperY = getYForPrice(visiblePoints[0].upperBand);
             ctx.moveTo(firstX, firstUpperY);
 
@@ -3119,7 +6131,7 @@
 
                 if (!closestBar) continue;
 
-                const x = (closestIndex - viewOffset) * barWidth + barWidth / 2;
+                const x = (closestIndex - viewOffset) * currentBarWidth + currentBarWidth / 2;
                 const y = getYForPrice(point.upperBand);
                 ctx.lineTo(x, y);
             }
@@ -3137,7 +6149,7 @@
 
             ctx.beginPath();
 
-            const firstX = (firstPointIndex - viewOffset) * barWidth + barWidth / 2;
+            const firstX = (firstPointIndex - viewOffset) * currentBarWidth + currentBarWidth / 2;
             const firstLowerY = getYForPrice(visiblePoints[0].lowerBand);
             ctx.moveTo(firstX, firstLowerY);
 
@@ -3162,7 +6174,7 @@
 
                 if (!closestBar) continue;
 
-                const x = (closestIndex - viewOffset) * barWidth + barWidth / 2;
+                const x = (closestIndex - viewOffset) * currentBarWidth + currentBarWidth / 2;
                 const y = getYForPrice(point.lowerBand);
                 ctx.lineTo(x, y);
             }
@@ -3182,7 +6194,7 @@
 
         ctx.beginPath();
 
-        const firstX = (firstPointIndex - viewOffset) * barWidth + barWidth / 2;
+        const firstX = (firstPointIndex - viewOffset) * currentBarWidth + currentBarWidth / 2;
         const firstY = getYForPrice(visiblePoints[0].value);
         ctx.moveTo(firstX, firstY);
 
@@ -3206,7 +6218,7 @@
 
             if (!closestBar) continue;
 
-            const x = (closestIndex - viewOffset) * barWidth + barWidth / 2;
+            const x = (closestIndex - viewOffset) * currentBarWidth + currentBarWidth / 2;
             const y = getYForPrice(point.value);
             ctx.lineTo(x, y);
         }
@@ -3222,8 +6234,9 @@
         const lastUpperY = lastPoint.upperBand ? getYForPrice(lastPoint.upperBand) : null;
         const lastLowerY = lastPoint.lowerBand ? getYForPrice(lastPoint.lowerBand) : null;
 
-        // Draw VWAP labels 12 bars away from the right edge
-        const labelX = chartWidth - (12 * barWidth);
+        // Calculate position for VWAP tags (12 bars away from the price scale)
+        // Position from the right edge of the chart (where price scale begins)
+        const tagX = canvas.width - priceScaleWidth - (12 * currentBarWidth);
 
         // Draw main VWAP label
         ctx.font = 'bold 10px Arial';
@@ -3233,28 +6246,31 @@
 
         // Use the tag color directly for text
         ctx.fillStyle = tagColor;
-        ctx.textAlign = 'right';
+        ctx.textAlign = 'center';
 
         // Add PD prefix for previous day labels
         const prefix = isPreviousDay ? 'PD ' : '';
 
-        ctx.fillText(`--- ${prefix}VWAP`, labelX, lastY + 4);
+        ctx.fillText(`${prefix}VWAP`, tagX, lastY - 5);
 
-        // Draw upper band label (VAH - Volume-weighted Average High)
+        // Draw upper band label (STDEV+ - Standard Deviation Upper Band)
         if (lastUpperY) {
             // Use the tag color directly for text
             ctx.fillStyle = tagColor;
-            ctx.fillText(`--- ${prefix}VAH`, labelX, lastUpperY + 4);
+            ctx.fillText(`${prefix}STDEV+`, tagX, lastUpperY - 5);
         }
 
-        // Draw lower band label (VAL - Volume-weighted Average Low)
+        // Draw lower band label (STDEV- - Standard Deviation Lower Band)
         if (lastLowerY) {
             // Use the tag color directly for text
             ctx.fillStyle = tagColor;
-            ctx.fillText(`--- ${prefix}VAL`, labelX, lastLowerY + 4);
+            ctx.fillText(`${prefix}STDEV-`, tagX, lastLowerY + 15);
         }
 
         // No legend in top left anymore
+
+        // Restore the context state
+        ctx.restore();
     }
 
     function updateBarCountdown() {
@@ -3288,17 +6304,129 @@
         // Calculate total milliseconds to the next interval boundary
         const msToNext = (minutesToNext * 60 * 1000) - (seconds * 1000) - ms;
 
+        // Get the previous countdown value to detect when it reaches 0
+        const previousCountdown = barCloseCountdown;
+
         // Calculate seconds remaining until next bar
-        barCloseCountdown = Math.max(0, Math.floor(msToNext / 1000));
+        const newCountdown = Math.max(0, Math.floor(msToNext / 1000));
+
+        // Make sure barCloseCountdown is globally accessible
+        barCloseCountdown = newCountdown;
+        window.barCloseCountdown = newCountdown;
+
+        // Reset the bar creation flag when we're not at the interval boundary
+        // This allows a new bar to be created for the next interval
+        if (newCountdown > 0) {
+            barCreatedForCurrentInterval = false;
+            window.barCreatedForCurrentInterval = false;
+        }
+
+        // Check if we've just reached 0 from any positive value
+        // This means the bar has just closed and we need to create a new one
+        if (previousCountdown > 0 && newCountdown === 0 && !barCreatedForCurrentInterval) {
+            console.log(`Bar countdown reached 0 (from ${previousCountdown}), creating new bar for next interval`);
+            createNewBar();
+
+            // Set the flag to prevent creating multiple bars for this interval
+            barCreatedForCurrentInterval = true;
+            window.barCreatedForCurrentInterval = true;
+            lastBarCreationTime = now;
+            window.lastBarCreationTime = now;
+        }
 
         // Update the bar interval in milliseconds based on the current timeframe
         barIntervalMs = tf * 60 * 1000;
         window.barIntervalMs = barIntervalMs; // Update global variable
 
         // Log the countdown for debugging
-        if (barCloseCountdown % 10 === 0) { // Log every 10 seconds to avoid console spam
-            console.log(`Next ${tf}-min bar in: ${Math.floor(barCloseCountdown / 60)}:${(barCloseCountdown % 60).toString().padStart(2, '0')}`);
+        console.log(`Next ${tf}-min bar in: ${Math.floor(barCloseCountdown / 60)}:${(barCloseCountdown % 60).toString().padStart(2, '0')}`);
+    }
+
+    // Function to create a new bar when the current interval completes
+    function createNewBar() {
+        // Make this function globally accessible
+        window.createNewBar = createNewBar;
+
+        console.log('createNewBar called - creating a new bar for the next interval');
+
+        // Check if we've already created a bar for this interval
+        if (barCreatedForCurrentInterval) {
+            console.log('Bar already created for current interval, skipping');
+            return;
         }
+
+        // Only proceed if we have bars and a current candle
+        if (!bars || bars.length === 0) {
+            console.log('Cannot create new bar: no existing bars');
+            return;
+        }
+
+        // Get the last bar from the bars array
+        const lastBar = bars[bars.length - 1];
+
+        // Get the close price from the current candle or last bar
+        const lastPrice = currentCandle ? currentCandle.close : lastBar.close;
+
+        // Calculate the time for the new candle (next interval)
+        const tf = window.currentTimeframe || currentTimeframe;
+        const now = new Date();
+        const minutes = now.getMinutes();
+        const currentInterval = Math.floor(minutes / tf) * tf;
+        const nextIntervalMinutes = (currentInterval + tf) % 60;
+
+        // Create a date for the next interval
+        const nextIntervalDate = new Date(now);
+        nextIntervalDate.setMinutes(nextIntervalMinutes);
+        nextIntervalDate.setSeconds(0);
+        nextIntervalDate.setMilliseconds(0);
+
+        // If we're crossing an hour boundary
+        if (nextIntervalMinutes < currentInterval) {
+            nextIntervalDate.setHours(nextIntervalDate.getHours() + 1);
+        }
+
+        const nextCandleTime = nextIntervalDate.getTime();
+
+        // Create a new candle for the next interval
+        const newCandle = {
+            time: nextCandleTime,
+            open: lastPrice,
+            high: lastPrice,
+            low: lastPrice,
+            close: lastPrice
+        };
+
+        console.log(`Created new candle at ${new Date(nextCandleTime).toISOString()}:`, newCandle);
+
+        // Update the current candle reference
+        currentCandle = newCandle;
+        currentCandleTime = nextCandleTime;
+
+        // Make sure these are globally accessible
+        window.currentCandle = newCandle;
+        window.currentCandleTime = nextCandleTime;
+
+        // Add the new candle to the bars array
+        const existingIndex = bars.findIndex(b => b.time === nextCandleTime);
+        if (existingIndex !== -1) {
+            // Replace existing bar
+            bars[existingIndex] = { ...newCandle };
+            console.log(`Replaced existing bar at index ${existingIndex} with new candle`);
+        } else {
+            // Add new bar
+            bars.push({ ...newCandle });
+            // Sort bars by time (ascending)
+            bars.sort((a, b) => a.time - b.time);
+            console.log(`Added new candle to bars array, now has ${bars.length} bars`);
+        }
+
+        // Force a chart update
+        drawChart();
+
+        // Dispatch an event to notify other components that a new bar has been created
+        document.dispatchEvent(new CustomEvent('newBarCreated', {
+            detail: { bar: newCandle, time: nextCandleTime }
+        }));
     }
 
     function startCountdownTimer() {
@@ -3310,18 +6438,39 @@
         // Update immediately
         updateBarCountdown();
 
+        // Check if we need to create a new bar immediately
+        // This handles cases where the page is loaded right at the interval boundary
+        if (barCloseCountdown === 0 && !barCreatedForCurrentInterval) {
+            console.log('Countdown is 0 at timer start, creating new bar immediately');
+            createNewBar();
+        }
+
         // Then update every second
         countdownInterval = setInterval(() => {
+            // Update the countdown
             updateBarCountdown();
+
+            // The updateBarCountdown function will handle creating a new bar if needed
+            // We don't need to check the countdown here anymore as it would create duplicate bars
+
             // Only redraw if the chart is visible
             if (document.visibilityState === 'visible') {
                 drawChart();
             }
         }, 1000);
+
+        // Make the countdown timer globally accessible
+        window.countdownInterval = countdownInterval;
     }
 
     function drawTimeScale() {
-        if (!ctx || !canvas) return;
+        if (!ctx || !canvas) {
+            console.error('Canvas or context not available for time scale');
+            return;
+        }
+
+        // Save context state to ensure time scale is drawn correctly
+        ctx.save();
 
         // Use histogramHeight only if bid/ask strength is visible
         const histogramHeightToUse = isBidAskStrengthVisible ? histogramHeight : 0;
@@ -3329,60 +6478,77 @@
         const chartWidth = canvas.width - priceScaleWidth;
         const chartHeight = canvas.height - timeScaleHeight - histogramHeightToUse - histogramPaneGapToUse;
 
-        // Draw the bid/ask strength histogram first (if visible)
-        drawBidAskStrengthHistogram();
+            // Draw the filtered bid/ask strength histogram first (if visible)
+            try {
+                if (isBidAskStrengthVisible) {
+                    drawBidAskStrengthHistogram();
+                }
+            } catch (error) {
+                console.error('Error drawing bid/ask strength histogram:', error);
+            }
 
-        // Calculate the time scale area
-        const timeScaleY = chartHeight + histogramHeightToUse + histogramPaneGapToUse;
+            // Draw the all orders bid/ask strength histogram next (if visible)
+            try {
+                if (isBidAskStrengthVisible) {
+                    drawAllOrdersBidAskStrengthHistogram();
+                }
+            } catch (error) {
+                console.error('Error drawing all orders bid/ask strength histogram:', error);
+            }
 
-        // Fill time scale background with the same color as the chart (TradingView style)
-        const bgColor = getColor('background', '#131722');
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(0, timeScaleY, chartWidth, timeScaleHeight);
+            // Calculate the time scale area
+            const timeScaleY = chartHeight + histogramHeightToUse + histogramPaneGapToUse;
 
-        // Draw the space in the bottom right corner (under price scale, right of time scale)
-        ctx.fillRect(chartWidth, timeScaleY, priceScaleWidth, timeScaleHeight);
+            // Fill time scale background with the same color as the chart (TradingView style)
+            const bgColor = getColor('background', '#131722');
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, timeScaleY, chartWidth, timeScaleHeight);
 
-        // Draw horizontal separator line between chart/histogram and time scale (TradingView style)
-        ctx.strokeStyle = 'rgba(150, 150, 150, 0.4)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, timeScaleY);
-        ctx.lineTo(canvas.width, timeScaleY);
-        ctx.stroke();
+            // Draw the space in the bottom right corner (under price scale, right of time scale)
+            ctx.fillRect(chartWidth, timeScaleY, priceScaleWidth, timeScaleHeight);
 
-        // Draw vertical separator line between time scale and price scale area (TradingView style)
-        ctx.strokeStyle = 'rgba(150, 150, 150, 0.4)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(chartWidth, timeScaleY);
-        ctx.lineTo(chartWidth, canvas.height);
-        ctx.stroke();
+            // Draw horizontal separator line between chart/histogram and time scale (TradingView style)
+            ctx.strokeStyle = 'rgba(150, 150, 150, 0.4)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, timeScaleY);
+            ctx.lineTo(canvas.width, timeScaleY);
+            ctx.stroke();
 
-        if (bars.length === 0 || visibleBars <= 0) {
-            return;
-        }
+            // Draw vertical separator line between time scale and price scale area (TradingView style)
+            ctx.strokeStyle = 'rgba(150, 150, 150, 0.4)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(chartWidth, timeScaleY);
+            ctx.lineTo(chartWidth, canvas.height);
+            ctx.stroke();
 
-        const startIndex = Math.max(0, Math.floor(viewOffset));
-        const endIndex = Math.min(bars.length, startIndex + Math.ceil(visibleBars));
-        const visibleBarsData = bars.slice(startIndex, endIndex);
-        const fractionalOffset = viewOffset - startIndex;
+            if (bars.length === 0 || visibleBars <= 0) {
+                return;
+            }
 
-        // TradingView-style: Calculate how many labels to show based on available space
-        // Adjust spacing to require a bit more zoom to show all time labels
-        const minLabelSpacing = 60; // Increased to match TradingView spacing
-        const labelInterval = Math.max(1, Math.ceil(minLabelSpacing / barWidth));
+            // Calculate indices for visible bars
+            const startIndex = Math.max(0, Math.floor(viewOffset));
+            const endIndex = Math.min(bars.length, startIndex + Math.ceil(visibleBars));
+            // Get visible bars without reversing (bars are already in chronological order)
+            const visibleBarsData = bars.slice(startIndex, endIndex);
+            const fractionalOffset = viewOffset - startIndex;
 
-        // TradingView-style font settings
-        ctx.font = '10px Arial, sans-serif';
-        ctx.fillStyle = 'rgba(150, 150, 150, 0.9)';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
+            // TradingView-style: Calculate how many labels to show based on available space
+            // Adjust spacing to require a bit more zoom to show all time labels
+            const minLabelSpacing = 60; // Increased to match TradingView spacing
+            const labelInterval = Math.max(1, Math.ceil(minLabelSpacing / barWidth));
 
-        const startX = -fractionalOffset * barWidth;
+            // TradingView-style font settings
+            ctx.font = '10px Arial, sans-serif';
+            ctx.fillStyle = 'rgba(150, 150, 150, 0.9)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
 
-        // Draw vertical grid lines for each bar (TradingView style)
-        visibleBarsData.forEach((bar, i) => {
+            const startX = -fractionalOffset * barWidth;
+
+            // Draw vertical grid lines for each bar (TradingView style)
+            visibleBarsData.forEach((bar, i) => {
             const x = startX + i * barWidth + barWidth / 2;
 
             // Skip if off-screen
@@ -3406,50 +6572,20 @@
             }
         });
 
-        // Add future bars if we're at the end of the data (TradingView style)
-        if (endIndex >= bars.length && bars.length > 0) {
-            const lastBar = bars[bars.length - 1];
-            const lastBarTime = lastBar.time;
-            const lastBarX = startX + (visibleBarsData.length - 1) * barWidth;
+        // We don't need to add future bars here anymore since they're already included in visibleBarsData
+        // The future bars are now handled in the main drawChart function
 
-            // Calculate how many future bars we can show
-            const availableWidth = chartWidth - lastBarX - barWidth;
-            const maxFutureBars = Math.floor(availableWidth / barWidth);
-
-            // Draw future bars (up to 12 or available space - TradingView shows fewer future bars)
-            const futureBarsToShow = Math.min(12, maxFutureBars);
-
-            for (let i = 1; i <= futureBarsToShow; i++) {
-                // Calculate future bar time (5-minute intervals)
-                const futureBarTime = lastBarTime + (barIntervalMs * i);
-                const x = lastBarX + (i * barWidth) + barWidth / 2;
-
-                // Skip if off-screen
-                if (x < 0 || x > chartWidth) continue;
-
-                // Draw vertical grid line for future bars (lighter style for TradingView)
-                ctx.strokeStyle = 'rgba(70, 70, 70, 0.2)';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(x, timeScaleY);
-                ctx.lineTo(x, timeScaleY + 4); // Short tick mark
-                ctx.stroke();
-
-                // Draw future time labels at appropriate intervals
-                if (i % labelInterval === 0) {
-                    const formattedTime = formatTimestamp(futureBarTime);
-                    ctx.fillStyle = 'rgba(120, 120, 120, 0.7)'; // Lighter color for future times
-                    ctx.fillText(formattedTime, x, timeScaleY + 6);
-                }
-            }
-        }
+        // Restore context state to ensure clean state for subsequent drawing operations
+        ctx.restore();
     }
 
     function drawPriceScale() {
-        if (!ctx || !canvas) return;
-
-        // First, save the current context state
-        ctx.save();
+        if (!ctx || !canvas) {
+            console.error('Canvas or context not available for price scale');
+            return;
+        }
+            // First, save the current context state
+            ctx.save();
 
         // Use the background color from the color customizer
         ctx.fillStyle = getColor('background', '#131722');
@@ -3615,6 +6751,32 @@
         ctx.restore();
     }
 
+    // Animation frame request ID for cancellation
+    let animationFrameId = null;
+
+    // Flag to track if a chart update is pending
+    let isChartUpdatePending = false;
+
+    // Function to request a chart update using requestAnimationFrame
+    function requestChartUpdate(forceUpdate = false) {
+        // If force update is requested, cancel any pending update and draw immediately
+        if (forceUpdate && animationFrameId) {
+            window.cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+            isChartUpdatePending = false;
+        }
+
+        if (!isChartUpdatePending || forceUpdate) {
+            isChartUpdatePending = true;
+            console.log(`Requesting chart update at ${new Date().toISOString()}`);
+            animationFrameId = window.requestAnimationFrame(() => {
+                console.log(`Drawing chart at ${new Date().toISOString()}`);
+                drawChart();
+                isChartUpdatePending = false;
+            });
+        }
+    }
+
     function drawChart() {
         try {
             if (!ctx || !canvas) {
@@ -3622,14 +6784,44 @@
                 return;
             }
 
-            // Draw coin indicator in top middle
-            drawCoinIndicator();
+            // If a coin change is in progress, don't draw the chart yet
+            if (isCoinChangeInProgress) {
+                console.log('Coin change in progress, skipping chart draw');
+                return;
+            }
 
-            // Log that we're drawing the coin indicator
-            console.log('Drawing coin indicator for:', window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC');
+            // Reset line dash pattern to solid lines at the beginning of each draw cycle
+            ctx.setLineDash([]);
 
-            // Make drawChart globally accessible
+            // Make drawChart and requestChartUpdate globally accessible
             window.drawChart = drawChart;
+            window.requestChartUpdate = requestChartUpdate;
+
+            // Expose bars and currentCandle to allow external updates
+            window.bars = bars;
+            window.currentCandle = currentCandle;
+            window.currentCandleTime = currentCandleTime;
+
+            // Check if we have a latest price from the real-time updater
+            if (window.realTimeUpdater && window.realTimeUpdater.getLatestPrice && bars.length > 0) {
+                const latestPrice = window.realTimeUpdater.getLatestPrice();
+                if (latestPrice !== null) {
+                    console.log(`drawChart: Using latest price from realTimeUpdater: ${latestPrice}`);
+
+                    // Update the last candle with the latest price
+                    const lastCandle = bars[bars.length - 1];
+                    lastCandle.high = Math.max(lastCandle.high, latestPrice);
+                    lastCandle.low = Math.min(lastCandle.low, latestPrice);
+                    lastCandle.close = latestPrice;
+
+                    // Also update the current candle reference if available
+                    if (currentCandle) {
+                        currentCandle.high = Math.max(currentCandle.high, latestPrice);
+                        currentCandle.low = Math.min(currentCandle.low, latestPrice);
+                        currentCandle.close = latestPrice;
+                    }
+                }
+            }
 
             // Initialize VWAP if needed
             if (vwapData.startTime === 0) {
@@ -3679,10 +6871,37 @@
                 return;
             }
 
+            // Calculate indices for visible bars
+            // viewOffset is set to show the most recent bars by default
             const startIndex = Math.max(0, Math.floor(viewOffset));
             const endIndex = Math.min(bars.length, startIndex + Math.ceil(visibleBars));
-            const visibleBarsData = bars.slice(startIndex, endIndex);
+            // Get visible bars without reversing (bars are already in chronological order)
+            let visibleBarsData = bars.slice(startIndex, endIndex);
             const fractionalOffset = viewOffset - startIndex;
+
+            // Handle the case when we're scrolled into the future area
+            // If we have fewer bars than expected, we're in the future area
+            const expectedBars = Math.ceil(visibleBars);
+            if (visibleBarsData.length < expectedBars && bars.length > 0) {
+                // Create empty future bars to fill the gap
+                const lastBar = bars[bars.length - 1];
+                const missingBars = expectedBars - visibleBarsData.length;
+
+                for (let i = 0; i < missingBars; i++) {
+                    // Create a placeholder bar with the same close price as the last real bar
+                    // but make it visually distinct (no body, just a line)
+                    const futureTime = lastBar.time + ((i + 1) * barIntervalMs);
+                    const placeholderBar = {
+                        time: futureTime,
+                        open: lastBar.close,
+                        high: lastBar.close,
+                        low: lastBar.close,
+                        close: lastBar.close,
+                        isFuture: true // Mark as a future bar for special rendering
+                    };
+                    visibleBarsData.push(placeholderBar);
+                }
+            }
 
             // Auto-adjust price scale based on visible candlesticks
             // This happens in two cases:
@@ -3724,13 +6943,13 @@
                             maxPrice += 1;
                         }
                     } else {
-                        minPrice = btcPrice > 0 ? btcPrice * 0.99 : 0;
-                        maxPrice = btcPrice > 0 ? btcPrice * 1.01 : 1;
+                        minPrice = window.latestPrice > 0 ? window.latestPrice * 0.99 : 0;
+                        maxPrice = window.latestPrice > 0 ? window.latestPrice * 1.01 : 1;
                     }
-                } else if (btcPrice > 0) {
+                } else if (window.latestPrice > 0) {
                     // If we have a price but no bars, use the current price
-                    minPrice = btcPrice * 0.95;
-                    maxPrice = btcPrice * 1.05;
+                    minPrice = window.latestPrice * 0.95;
+                    maxPrice = window.latestPrice * 1.05;
                 }
             }
 
@@ -3762,6 +6981,10 @@
                 // If no orders found, use a default value
                 if (maxValue === 0) maxValue = 1000000;
 
+                // Track when we start drawing orderbook lines
+                const drawLinesStartTime = Date.now();
+                window.lastOrderbookLinesDrawStartTime = drawLinesStartTime;
+
                 // Draw bid lines if we have any
                 if (orderbook.bids && orderbook.bids.length > 0) {
                     orderbook.bids.forEach(([price, , dollarValue]) => {
@@ -3784,6 +7007,15 @@
                             askColor;
                         drawHeatmapLine(price, dollarValue, rgbaColor, maxValue);
                     });
+                }
+
+                // Track how long it took to draw all orderbook lines
+                const drawLinesEndTime = Date.now();
+                const drawLinesTime = drawLinesEndTime - drawLinesStartTime;
+
+                // Only log occasionally to reduce console spam
+                if (Math.random() < 0.05) { // 5% of updates
+                    console.log(`Orderbook lines draw time: ${drawLinesTime}ms (${orderbook.bids.length} bids, ${orderbook.asks.length} asks)`);
                 }
 
                 // Log the number of bids and asks being displayed
@@ -3810,6 +7042,25 @@
                 const yClose = getYForPrice(bar.close);
 
                 if (![yHigh, yLow, yOpen, yClose].every(isFinite)) return;
+
+                // Check if this is a future bar
+                if (bar.isFuture) {
+                    // For future bars, use a dashed line with neutral color
+                    const futureColor = getColor('futureBar', '#888888');
+
+                    // Draw a dashed vertical line for future bar
+                    ctx.strokeStyle = futureColor;
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]); // Dashed line
+                    ctx.beginPath();
+                    ctx.moveTo(candleX + candleWidth / 2, yHigh);
+                    ctx.lineTo(candleX + candleWidth / 2, yLow);
+                    ctx.stroke();
+                    ctx.setLineDash([]); // Reset to solid line
+
+                    // Skip the rest of the candle drawing for future bars
+                    return;
+                }
 
                 const isBullish = bar.close >= bar.open;
 
@@ -3873,14 +7124,38 @@
                 currentPriceY = priceY;
             }
 
-            // Draw price scale (will draw the price tag and countdown)
-            drawPriceScale();
+            // Make sure to reset line dash pattern before drawing bid/ask tags
+            ctx.setLineDash([]);
 
-            // Draw the time scale
-            drawTimeScale();
+                    // Make sure current price is set before drawing tags
+            if (bars.length > 0) {
+                const currentPrice = bars[bars.length - 1].close;
+                const priceY = getYForPrice(currentPrice);
+                currentPriceY = priceY;
 
-            // Draw bid/ask tags
-            drawBidAskTags();
+                // Update global price variable
+                window.latestPrice = currentPrice;
+            }
+
+            // We'll draw bid/ask tags after the price scale to ensure they appear on top
+
+            // Calculate volume profile data if needed
+            if (isVolumeProfileVisible && volumeProfileData.pricePoints.length === 0) {
+                console.log('Volume profile is visible but data is empty, calculating...');
+                // Force recalculation of volume profile data
+                try {
+                    calculateVolumeProfile();
+                    console.log('Volume profile data calculated successfully');
+                } catch (error) {
+                    console.error('Error calculating volume profile data:', error);
+                }
+            }
+
+            // Draw user-drawn lines
+            drawLines();
+
+            // Update line drawing button state
+            updateLineDrawingButtonState();
 
             // Draw liquidation markers if the function is available
             if (typeof window.drawLiquidationMarkers === 'function') {
@@ -3901,17 +7176,84 @@
                 console.warn('drawLiquidationMarkers function not available');
             }
 
-            // Draw crosshair if mouse is over the chart
-            if (mouseX !== null && mouseY !== null) {
-                drawCrosshair();
+            // Draw whale watcher markers if the function is available
+            if (typeof window.drawWhaleMarkers === 'function') {
+                // Pass mouse coordinates to enable hover tooltips
+                window.drawWhaleMarkers(ctx, bars, getYForPrice, barWidth, viewOffset, mouseX, mouseY);
+            } else {
+                console.log('Whale watcher markers function not available yet');
             }
 
+            // Always draw price scale and time scale first to ensure they're visible
+            console.log('Drawing price scale and time scale');
+            drawPriceScale();
+            drawTimeScale();
+
+            // Draw the depth indicators if visible (in a separate context to avoid affecting other elements)
+            if (isBidAskStrengthVisible) {
+                console.log('Drawing depth indicators in separate context...');
+                // Save the main context before drawing depth indicators
+                ctx.save();
+                drawBidAskStrengthHistogram();
+                drawAllOrdersBidAskStrengthHistogram();
+                // Restore the main context after drawing depth indicators
+                ctx.restore();
+                console.log('Main context restored after depth indicators');
+            }
+
+            // Draw volume profile if visible (in a separate context to avoid affecting other elements)
+            // Draw it after price scale, time scale, and depth indicators to ensure they remain visible
+            if (isVolumeProfileVisible) {
+                try {
+                    console.log('Drawing volume profile in separate context...');
+                    // Save the main context before drawing volume profile
+                    ctx.save();
+                    drawVolumeProfile();
+                    // Restore the main context after drawing volume profile
+                    ctx.restore();
+                    console.log('Main context restored after volume profile');
+                } catch (error) {
+                    console.error('Error drawing volume profile:', error);
+                    // Make sure context is restored even if there's an error
+                    try { ctx.restore(); } catch (e) { /* ignore */ }
+                }
+            }
+
+            // Now draw bid/ask tags on top of everything else
+            // This ensures the price tag and countdown overlay the price scale
+            console.log('Drawing bid/ask tags on top of price scale');
+            drawBidAskTags();
+
+            // Draw crosshair if mouse is over the chart
+            if (mouseX !== null && mouseY !== null) {
+                // Save context before drawing crosshair
+                ctx.save();
+                drawCrosshair();
+                // Restore context after drawing crosshair
+                ctx.restore();
+            }
+
+            // Draw measurement tool if we have measurement points
+            if (measurementStart && measurementEnd) {
+                drawMeasurementTool();
+            }
+
+            // Crosshair is already drawn above
+
             // Make price available globally for other components
-            if (window.coinManager) {
-                const coinSymbol = window.coinManager.getCurrentCoin().symbol.toLowerCase();
-                window[`${coinSymbol}Price`] = bars.length > 0 ? bars[bars.length - 1].close : 0;
-            } else {
-                window.btcPrice = bars.length > 0 ? bars[bars.length - 1].close : 0;
+            window.latestPrice = bars.length > 0 ? bars[bars.length - 1].close : 0;
+
+            // Set cursor style based on active tools
+            if (canvas) {
+                if (isMeasurementToolActive || isLineDrawingMode || isDragging) {
+                    // Always use plus sign cursor when measuring, drawing lines, or dragging the chart
+                    canvas.classList.add('cursor-plus');
+                } else if (mouseX !== null && mouseY !== null && mouseX < canvas.width - priceScaleWidth) {
+                    canvas.classList.add('cursor-plus');
+                } else {
+                    canvas.style.cursor = 'default';
+                    canvas.classList.remove('cursor-plus');
+                }
             }
         } catch (error) {
             console.error('Error in drawChart:', error);
@@ -3920,118 +7262,7 @@
 
     // Connection status widget removed
 
-    // Draw coin indicator in the top middle of the chart
-    function drawCoinIndicator() {
-        console.log('drawCoinIndicator called');
-        if (!ctx || !canvas) {
-            console.error('Canvas or context not available for coin indicator');
-            return;
-        }
-
-        // Get current coin info
-        const coin = window.coinManager ? window.coinManager.getCurrentCoin() : { symbol: 'BTC', name: 'Bitcoin' };
-        const currentPrice = window[`${coin.symbol.toLowerCase()}Price`] || 0;
-
-        // Format price according to coin's precision
-        const formattedPrice = currentPrice.toFixed(coin.pricePrecision || 2);
-
-        // Create indicator text components
-        const symbolText = coin.symbol;
-        const priceText = `/USDT: ${formattedPrice}`;
-        const fullText = `${symbolText}${priceText}`;
-
-        // Set up styles
-        ctx.font = 'bold 22px Arial'; // Increased font size for better visibility
-        ctx.textAlign = 'center';
-
-        // Calculate position (top center of the chart)
-        const x = canvas.width / 2;
-        const y = 30; // Position at the top of the chart
-
-        // Log canvas dimensions and position for debugging
-        console.log('Canvas dimensions:', canvas.width, 'x', canvas.height);
-        console.log('Coin indicator position:', x, y);
-
-        // Measure text dimensions
-        const fullWidth = ctx.measureText(fullText).width;
-        const padding = 20; // Increased padding
-        const logoSpace = 30; // Space for the logo
-        const bgWidth = fullWidth + padding * 2 + logoSpace;
-        const bgHeight = 44; // Increased height
-
-        // Draw outer shadow for better visibility
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-        ctx.fillRect(x - bgWidth / 2 - 3, y - bgHeight / 2 - 3, bgWidth + 6, bgHeight + 6);
-
-        // Draw main background
-        ctx.fillStyle = 'rgba(31, 41, 55, 0.95)';
-        ctx.fillRect(x - bgWidth / 2, y - bgHeight / 2, bgWidth, bgHeight);
-
-        // Draw border with coin color
-        ctx.strokeStyle = coin.color || '#F7931A';
-        ctx.lineWidth = 4; // Thicker border
-        ctx.strokeRect(x - bgWidth / 2, y - bgHeight / 2, bgWidth, bgHeight);
-
-        // Create a temporary canvas for the logo
-        const logoSize = 24;
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = logoSize;
-        tempCanvas.height = logoSize;
-        const tempCtx = tempCanvas.getContext('2d');
-
-        // Draw the cryptocurrency logo
-        const logo = new Image();
-        logo.src = `images/crypto-logos/${coin.symbol.toLowerCase()}.svg`;
-
-        // Function to draw the logo when it's loaded
-        const drawLogoAndText = () => {
-            // Draw the logo on the temporary canvas
-            tempCtx.drawImage(logo, 0, 0, logoSize, logoSize);
-
-            // No special case for BTC anymore - using the original darker style
-
-            // Draw the logo on the main canvas
-            ctx.drawImage(tempCanvas, x - bgWidth/2 + padding/2, y + 6 - logoSize/2, logoSize, logoSize);
-
-            // Draw the coin symbol next to the logo
-            ctx.font = 'bold 22px Arial';
-            ctx.textAlign = 'left';
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillText(coin.symbol, x - bgWidth/2 + logoSize + padding, y + 8);
-            ctx.fillStyle = '#ffffff';
-            ctx.fillText(coin.symbol, x - bgWidth/2 + logoSize + padding - 2, y + 6);
-
-            // Draw the price text
-            ctx.textAlign = 'right';
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillText(`/USDT: ${formattedPrice}`, x + bgWidth/2 - padding + 2, y + 8);
-            ctx.fillStyle = '#ffffff';
-            ctx.fillText(`/USDT: ${formattedPrice}`, x + bgWidth/2 - padding, y + 6);
-        };
-
-        // Check if the logo is already loaded
-        if (logo.complete) {
-            drawLogoAndText();
-        } else {
-            // If not loaded, wait for it to load
-            logo.onload = drawLogoAndText;
-
-            // Fallback in case the logo doesn't load
-            setTimeout(() => {
-                if (!logo.complete) {
-                    // Draw text without logo as fallback
-                    ctx.textAlign = 'center';
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                    ctx.fillText(`${coin.symbol}/USDT: ${formattedPrice}`, x + 2, y + 8);
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillText(`${coin.symbol}/USDT: ${formattedPrice}`, x, y + 6);
-                }
-            }, 500);
-        }
-
-        // Reset line width to avoid affecting other drawing operations
-        ctx.lineWidth = 1;
-    }
+    // Removed drawCoinIndicator function as we now only use the top bar indicator
 
     // --- Initialization ---
     function initializeChart() {
@@ -4120,21 +7351,20 @@
             }
         }, 1000); // Wait 1 second after page load
     }
-    })();
 
     // Initialize the threshold slider
     function initializeThresholdSlider() {
         console.log('Initializing threshold slider...');
-        const slider = document.getElementById('threshold-slider');
+        const sliderContainer = document.querySelector('.slider-container');
         const input = document.getElementById('threshold-input');
         const recommendedButton = document.getElementById('set-recommended');
 
-        if (!slider || !input || !recommendedButton) {
-            console.error('Slider, input, or recommended button elements not found!');
+        if (!sliderContainer || !input || !recommendedButton) {
+            console.error('Slider container, input, or recommended button elements not found!');
             return;
         }
 
-        console.log('Slider and input elements found:', slider, input);
+        console.log('Slider container and input elements found:', sliderContainer, input);
 
         // Update the slider progress bar
         function updateSliderProgress(slider, value) {
@@ -4291,39 +7521,39 @@
     // Function to manually update the slider for the current coin
     function updateThresholdSliderForCurrentCoin() {
         console.log('Manually updating threshold slider for current coin');
-        const slider = document.getElementById('threshold-slider');
         const input = document.getElementById('threshold-input');
         const recommendedText = document.getElementById('recommended-value');
 
-        if (!slider || !input) {
-            console.error('Slider or input elements not found!');
+        if (!input) {
+            console.error('Input element not found!');
             return;
         }
 
         const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
-        const currentValue = window.coinMinOrderValues[currentCoin] || coinMinOrderValues[currentCoin];
+        let currentValue = window.coinMinOrderValues[currentCoin] || coinMinOrderValues[currentCoin];
         const minValue = window.coinMinSliderValues[currentCoin] || 25;
         const recommendedValue = window.coinRecommendedValues[currentCoin] || 400;
 
+        // Round to nearest 25k step
+        currentValue = Math.round(currentValue / 25) * 25;
+
         console.log(`Manually updating slider for ${currentCoin}: value=${currentValue}, min=${minValue}, recommended=${recommendedValue}`);
 
-        // Update slider attributes for the current coin
-        slider.min = minValue;
-        slider.value = currentValue;
+        // Update input value
         input.min = minValue;
         input.value = currentValue;
 
-        // Update the slider progress bar
-        const min = parseInt(slider.min) || 25;
-        const max = parseInt(slider.max) || 1000;
-        const progress = ((currentValue - min) / (max - min)) * 100;
-        slider.style.setProperty('--slider-progress', `${progress}%`);
-
-        // Update the min delimiter text
-        const minDelimiter = document.querySelector('.slider-delimiter.min');
-        if (minDelimiter) {
-            minDelimiter.textContent = `${minValue}k`;
+        // Update custom slider if available
+        if (window.customSlider) {
+            window.customSlider.setOptions({
+                min: minValue,
+                value: currentValue,
+                step: 25 // Ensure step is set to 25k
+            });
         }
+
+        // We don't need to update the min delimiter text anymore
+        // as we now have min/max labels on the slider
 
         // Update the recommended value text
         if (recommendedText) {
@@ -4347,6 +7577,27 @@
             return;
         }
 
+        // Set the active button based on the current timeframe
+        console.log('Setting active timeframe button for timeframe:', currentTimeframe);
+        timeframeButtons.forEach(btn => {
+            const btnTimeframe = parseInt(btn.getAttribute('data-timeframe'));
+            if (btnTimeframe === currentTimeframe) {
+                btn.classList.add('active');
+                // Set background color to bullish candle color
+                const bullishColor = getColor('bullishCandleBody', getColor('bullishCandle', '#26a69a'));
+                btn.style.backgroundColor = bullishColor;
+                // Set text color based on background brightness
+                const textColor = isBrightColor(bullishColor) ? 'black' : 'white';
+                btn.style.color = textColor;
+                console.log('Timeframe button active: bg color =', bullishColor, 'text color =', textColor);
+            } else {
+                btn.classList.remove('active');
+                // Reset to default styling
+                btn.style.backgroundColor = '#2a2e39';
+                btn.style.color = '#aaa';
+            }
+        });
+
         timeframeButtons.forEach(button => {
             button.addEventListener('click', () => {
                 // Get the timeframe from the button's data attribute
@@ -4363,6 +7614,9 @@
                     // Update the current timeframe
                     currentTimeframe = newTimeframe;
                     window.currentTimeframe = newTimeframe; // Update global variable
+
+                    // Save the selected timeframe to localStorage
+                    localStorage.setItem('currentTimeframe', newTimeframe);
 
                     // Update the bar interval
                     barIntervalMs = currentTimeframe * 60 * 1000;
@@ -4404,6 +7658,14 @@
                     // Reset VWAP
                     initializeVwapPeriod();
 
+                    // Reset volume profile data
+                    volumeProfileData.pricePoints = [];
+                    volumeProfileData.maxVolume = 0;
+                    volumeProfileData.totalVolume = 0;
+                    volumeProfileData.valueAreaHigh = 0;
+                    volumeProfileData.valueAreaLow = 0;
+                    volumeProfileData.poc = 0;
+
                     // Fetch new historical data
                     fetchHistoricalData();
 
@@ -4414,6 +7676,201 @@
         });
     }
 
+    // Initialize the custom slider
+    function initializeCustomSlider() {
+        console.log('Initializing custom slider...');
+        // Hide the original slider to prevent conflicts
+        const originalSlider = document.getElementById('threshold-slider');
+        if (originalSlider) {
+            originalSlider.style.display = 'none';
+        }
+
+        const sliderContainer = document.querySelector('.slider-container');
+        const input = document.getElementById('threshold-input');
+        const recommendedButton = document.getElementById('set-recommended');
+
+        if (!sliderContainer || !input || !recommendedButton) {
+            console.error('Slider container, input, or recommended button elements not found!');
+            return;
+        }
+
+        // Get current coin values
+        const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+        const currentValue = window.coinMinOrderValues[currentCoin] || coinMinOrderValues[currentCoin];
+        const minValue = coinMinSliderValues[currentCoin] || 25; // Default to 25k for unknown coins
+        const recommendedValue = window.coinRecommendedValues[currentCoin] || 400; // Default to 400k for unknown coins
+
+        console.log(`Initializing custom slider for ${currentCoin}: value=${currentValue}, min=${minValue}, recommended=${recommendedValue}`);
+
+        // Initialize input value
+        input.value = currentValue;
+        input.min = minValue;
+
+        // Create custom slider
+        const customSlider = new CustomSlider({
+            container: sliderContainer,
+            min: minValue,
+            max: 1000,
+            value: currentValue,
+            step: 25, // Increment by 25k steps
+            onChange: (value) => {
+                // Update input value
+                input.value = value;
+
+                // Update the value for the current coin
+                const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+                window.coinMinOrderValues[currentCoin] = value;
+                coinMinOrderValues[currentCoin] = value;
+
+                // Save to localStorage
+                localStorage.setItem(`minOrderValue_${currentCoin}`, value);
+
+                // Redraw chart to update heatmap
+                drawChart();
+            }
+        });
+
+        // Store the custom slider instance globally
+        window.customSlider = customSlider;
+
+        // We don't need to update the min delimiter text anymore
+        // as we now have min/max labels on the slider
+
+        // Update the recommended value text
+        const recommendedText = document.getElementById('recommended-value');
+        if (recommendedText) {
+            recommendedText.textContent = `(Recommended: ${recommendedValue}k)`;
+        }
+
+        // Update the coin symbol in the label
+        const coinLabel = document.getElementById('threshold-coin');
+        if (coinLabel) {
+            coinLabel.textContent = currentCoin;
+        }
+
+        // Update when input changes
+        input.addEventListener('change', (e) => {
+            let value = parseInt(e.target.value);
+            const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+            const minValue = coinMinSliderValues[currentCoin] || 25; // Default to 25k for unknown coins
+
+            // Ensure value is within range
+            if (value < minValue) value = minValue;
+            if (value > 1000) value = 1000;
+
+            // Round to nearest 25k step
+            value = Math.round(value / 25) * 25;
+
+            // Update input
+            input.value = value;
+
+            // Update custom slider
+            customSlider.setValue(value);
+
+            // Update the value for the current coin
+            window.coinMinOrderValues[currentCoin] = value;
+            coinMinOrderValues[currentCoin] = value;
+
+            // Save to localStorage
+            localStorage.setItem(`minOrderValue_${currentCoin}`, value);
+
+            // Redraw chart to update heatmap
+            drawChart();
+        });
+
+        // Add event listener for the recommended button
+        recommendedButton.addEventListener('click', () => {
+            const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+            let recommendedValue = window.coinRecommendedValues[currentCoin] || 400;
+
+            // Round to nearest 25k step
+            recommendedValue = Math.round(recommendedValue / 25) * 25;
+
+            // Update input
+            input.value = recommendedValue;
+
+            // Update custom slider
+            customSlider.setValue(recommendedValue);
+
+            // Update the value for the current coin
+            window.coinMinOrderValues[currentCoin] = recommendedValue;
+
+            // Save to localStorage
+            localStorage.setItem(`minOrderValue_${currentCoin}`, recommendedValue);
+
+            // Redraw chart to update heatmap
+            drawChart();
+        });
+
+        // Function to update slider for current coin
+        function updateCustomSliderForCurrentCoin() {
+            const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+            let currentValue = window.coinMinOrderValues[currentCoin] || coinMinOrderValues[currentCoin];
+            const minValue = coinMinSliderValues[currentCoin] || 25; // Default to 25k for unknown coins
+            const recommendedValue = window.coinRecommendedValues[currentCoin] || 400; // Default to 400k for unknown coins
+
+            // Round to nearest 25k step
+            currentValue = Math.round(currentValue / 25) * 25;
+
+            console.log(`Updating custom slider for ${currentCoin}: value=${currentValue}, min=${minValue}, recommended=${recommendedValue}`);
+
+            // Update custom slider
+            customSlider.setOptions({
+                min: minValue,
+                value: currentValue,
+                step: 25 // Ensure step is set to 25k
+            });
+
+            // Update input
+            input.value = currentValue;
+            input.min = minValue;
+
+            // We don't need to update the min delimiter text anymore
+            // as we now have min/max labels on the slider
+
+            // Update the recommended value text
+            const recommendedText = document.getElementById('recommended-value');
+            if (recommendedText) {
+                recommendedText.textContent = `(Recommended: ${recommendedValue}k)`;
+            }
+
+            // Update the coin symbol in the label
+            const coinLabel = document.getElementById('threshold-coin');
+            if (coinLabel) {
+                coinLabel.textContent = currentCoin;
+            }
+        }
+
+        // Make the update function available globally
+        window.updateCustomSliderForCurrentCoin = updateCustomSliderForCurrentCoin;
+
+        // Listen for coin changes to update the slider
+        document.addEventListener('coinChanged', (event) => {
+            console.log('Coin changed event received:', event.detail);
+            updateCustomSliderForCurrentCoin();
+        });
+
+        // Also listen for the global coin change event
+        window.addEventListener('coinChanged', (event) => {
+            console.log('Window coin changed event received:', event.detail);
+            updateCustomSliderForCurrentCoin();
+        });
+
+        // Add direct event listeners to coin buttons as a fallback
+        const coinButtons = document.querySelectorAll('.coin-selector-container button');
+        coinButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                // Wait a short time for the coin manager to update
+                setTimeout(() => {
+                    console.log('Coin button clicked, updating slider');
+                    updateCustomSliderForCurrentCoin();
+                }, 100);
+            });
+        });
+
+        return updateCustomSliderForCurrentCoin;
+    }
+
     // Initialize the threshold slider when the DOM is fully loaded
     document.addEventListener('DOMContentLoaded', () => {
         console.log('DOM loaded, initializing threshold slider...');
@@ -4422,8 +7879,43 @@
         setTimeout(() => initializeThresholdSlider(), 500);
         setTimeout(() => initializeThresholdSlider(), 1000);
 
+        // Initialize custom slider
+        setTimeout(() => initializeCustomSlider(), 200);
+        setTimeout(() => initializeCustomSlider(), 600);
+        setTimeout(() => initializeCustomSlider(), 1200);
+
         // Also try to manually update the slider
         setTimeout(() => updateThresholdSliderForCurrentCoin(), 1500);
+
+        // Add a direct event listener to the slider as a fallback
+        setTimeout(() => {
+            const slider = document.getElementById('threshold-slider');
+            const input = document.getElementById('threshold-input');
+            if (slider && input) {
+                console.log('Adding direct event listener to slider');
+                slider.addEventListener('input', function(e) {
+                    const value = parseInt(e.target.value);
+                    input.value = value;
+
+                    // Update the slider progress bar
+                    const min = parseInt(slider.min) || 25;
+                    const max = parseInt(slider.max) || 1000;
+                    const progress = ((value - min) / (max - min)) * 100;
+                    slider.style.setProperty('--slider-progress', `${progress}%`);
+
+                    // Update the value for the current coin
+                    const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+                    window.coinMinOrderValues[currentCoin] = value;
+                    coinMinOrderValues[currentCoin] = value;
+
+                    // Save to localStorage
+                    localStorage.setItem(`minOrderValue_${currentCoin}`, value);
+
+                    // Redraw chart to update heatmap
+                    drawChart();
+                });
+            }
+        }, 2000);
 
         // Initialize the timeframe selector
         setTimeout(() => initializeTimeframeSelector(), 100);
@@ -4431,19 +7923,282 @@
         setTimeout(() => initializeTimeframeSelector(), 1000);
     });
 
+    // Function to update UI elements with bullish candle color
+    function updateUIColors() {
+        // Get the bullish candle color from CSS variable
+        const bullishColor = getComputedStyle(document.documentElement).getPropertyValue('--bullish-candle-color').trim() || '#26a69a';
+
+        // Update threshold slider
+        const thresholdSlider = document.getElementById('threshold-slider');
+        if (thresholdSlider) {
+            // Update the slider track color using CSS variable
+            document.documentElement.style.setProperty('--slider-track-color', bullishColor);
+        }
+
+        // Update recommended value text
+        const recommendedValue = document.getElementById('recommended-value');
+        if (recommendedValue) {
+            recommendedValue.style.color = bullishColor;
+        }
+
+        // Update set recommended button
+        const setRecommendedButton = document.getElementById('set-recommended');
+        if (setRecommendedButton) {
+            setRecommendedButton.style.backgroundColor = bullishColor;
+        }
+
+        // Update input focus border color
+        const thresholdInput = document.getElementById('threshold-input');
+        if (thresholdInput) {
+            thresholdInput.addEventListener('focus', function() {
+                this.style.borderColor = bullishColor;
+            });
+            thresholdInput.addEventListener('blur', function() {
+                this.style.borderColor = '#3a3f4c';
+            });
+        }
+
+        console.log('Updated UI elements with bullish candle color:', bullishColor);
+    }
+
+    // Listen for color updates to update CSS variables and UI elements
+    document.addEventListener('colorsUpdated', () => {
+        console.log('Colors updated, updating CSS variables and UI elements');
+        setColorVariables();
+        // Wait a bit for CSS variables to be applied
+        setTimeout(updateUIColors, 100);
+    });
+
     // Also try to initialize on window load as a fallback
     window.addEventListener('load', () => {
         console.log('Window loaded, initializing UI components...');
+        // Set color variables for CSS
+        setColorVariables();
+
+        // Update UI elements with the bullish candle color
+        setTimeout(updateUIColors, 100);
+
         initializeThresholdSlider();
         initializeTimeframeSelector();
+
+        // Initialize volume profile if it should be visible
+        if (isVolumeProfileVisible) {
+            console.log('Volume profile should be visible on load, initializing...');
+            // Force calculation of volume profile
+            setTimeout(() => {
+                console.log('Calculating volume profile after timeout...');
+                // Always recalculate to ensure it's fresh
+                volumeProfileData.pricePoints = [];
+                calculateVolumeProfile();
+                console.log('Volume profile calculated, redrawing chart...');
+                drawChart();
+            }, 2000); // Wait 2 seconds for data to load
+        }
+
         // Try again after a delay
         setTimeout(() => {
             initializeThresholdSlider();
             initializeTimeframeSelector();
+            // Update color variables again to ensure they're set
+            setColorVariables();
+            // Update UI elements again
+            updateUIColors();
         }, 1000);
+
+        // Initialize custom slider
+        initializeCustomSlider();
+        setTimeout(() => initializeCustomSlider(), 500);
+
         // Also try to manually update the slider
         setTimeout(() => updateThresholdSliderForCurrentCoin(), 1500);
+
+        // Add a direct event listener to the slider as a fallback
+        setTimeout(() => {
+            const slider = document.getElementById('threshold-slider');
+            const input = document.getElementById('threshold-input');
+            if (slider && input) {
+                console.log('Adding direct event listener to slider (window.load)');
+                slider.addEventListener('input', function(e) {
+                    const value = parseInt(e.target.value);
+                    input.value = value;
+
+                    // Update the slider progress bar
+                    const min = parseInt(slider.min) || 25;
+                    const max = parseInt(slider.max) || 1000;
+                    const progress = ((value - min) / (max - min)) * 100;
+                    slider.style.setProperty('--slider-progress', `${progress}%`);
+
+                    // Update the value for the current coin
+                    const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin().symbol : 'BTC';
+                    window.coinMinOrderValues[currentCoin] = value;
+                    coinMinOrderValues[currentCoin] = value;
+
+                    // Save to localStorage
+                    localStorage.setItem(`minOrderValue_${currentCoin}`, value);
+
+                    // Redraw chart to update heatmap
+                    drawChart();
+                });
+            }
+        }, 2000);
     });
 
     // Add a global function to update the slider that can be called from other scripts
     window.updateThresholdSlider = updateThresholdSliderForCurrentCoin;
+
+    // Initialize the coin indicator when the window loads
+    window.addEventListener('load', () => {
+        // Update the coin indicator in the top bar
+        if (typeof updateCoinIndicator === 'function') {
+            updateCoinIndicator();
+        }
+
+        // Add event listener for coin changes
+        document.addEventListener('coinChanged', () => {
+            console.log('Coin changed event received, updating coin indicator');
+            if (typeof updateCoinIndicator === 'function') {
+                updateCoinIndicator();
+            }
+        });
+
+        // Add event listener for price updates
+        document.addEventListener('priceUpdated', (event) => {
+            console.log('Price updated event received:', event.detail);
+            // Force a chart update
+            if (typeof drawChart === 'function') {
+                console.log('Forcing chart update due to price update event');
+                drawChart();
+            }
+        });
+
+        // Add event listener for forced chart updates
+        document.addEventListener('forceChartUpdate', (event) => {
+            console.log('Force chart update event received:', event.detail);
+
+            // Update the current candle with the latest price
+            if (event.detail && event.detail.price && bars.length > 0) {
+                const price = event.detail.price;
+                const lastCandle = bars[bars.length - 1];
+
+                // Update the candle
+                lastCandle.high = Math.max(lastCandle.high, price);
+                lastCandle.low = Math.min(lastCandle.low, price);
+                lastCandle.close = price;
+
+                console.log(`Updated last candle in bars array from event: high=${lastCandle.high}, low=${lastCandle.low}, close=${price}`);
+
+                // Also update the current candle reference if available
+                if (currentCandle) {
+                    currentCandle.high = Math.max(currentCandle.high, price);
+                    currentCandle.low = Math.min(currentCandle.low, price);
+                    currentCandle.close = price;
+                }
+            }
+
+            // Force a chart update
+            if (typeof drawChart === 'function') {
+                console.log('Forcing chart update due to forceChartUpdate event');
+                drawChart();
+            }
+        });
+    });
+
+    // Set up a periodic chart update to ensure the chart is always refreshed
+    setInterval(() => {
+        console.log('Periodic chart update triggered');
+        if (typeof requestChartUpdate === 'function') {
+            requestChartUpdate(true);
+        } else if (typeof drawChart === 'function') {
+            drawChart();
+        }
+    }, 1000); // Update every second
+
+    // Set up a fallback polling mechanism to fetch the latest price from Bitstamp API
+    // This ensures we always have the latest price even if WebSocket fails
+    setInterval(() => {
+        const currentCoin = window.coinManager ? window.coinManager.getCurrentCoin() : { symbol: 'BTC' };
+        const symbol = currentCoin.symbol.toLowerCase() + 'usd';
+
+        // Fetch the latest ticker data from Bitstamp
+        fetch(`https://www.bitstamp.net/api/v2/ticker/${symbol}/`)
+            .then(response => response.json())
+            .then(data => {
+                console.log('Fetched latest price from Bitstamp API:', data);
+
+                if (data && data.last) {
+                    // Create a synthetic trade object
+                    const syntheticTrade = {
+                        price: data.last,
+                        amount: '0',
+                        timestamp: Math.floor(Date.now() / 1000),
+                        type: '0' // Default to buy
+                    };
+
+                    // Process this as a manual update
+                    if (typeof window.handleBitstampTrade === 'function') {
+                        window.handleBitstampTrade(syntheticTrade, true);
+                    }
+
+                    // Update the current candle with this price
+                    if (currentCandle) {
+                        const price = parseFloat(data.last);
+                        const oldClose = currentCandle.close;
+
+                        // Only update if the price has changed
+                        if (price !== oldClose) {
+                            console.log(`API poll: Price changed from ${oldClose} to ${price}`);
+
+                            // Update the candle
+                            const newHigh = Math.max(currentCandle.high, price);
+                            const newLow = Math.min(currentCandle.low, price);
+
+                            // Log changes
+                            if (newHigh !== currentCandle.high) {
+                                console.log(`API poll: Updating high from ${currentCandle.high} to ${newHigh}`);
+                            }
+                            if (newLow !== currentCandle.low) {
+                                console.log(`API poll: Updating low from ${currentCandle.low} to ${newLow}`);
+                            }
+
+                            // Apply updates
+                            currentCandle.high = newHigh;
+                            currentCandle.low = newLow;
+                            currentCandle.close = price;
+
+                            // Find and update the current candle in the bars array
+                            const currentBarIndex = bars.findIndex(b => b.time === currentCandle.time);
+                            if (currentBarIndex !== -1) {
+                                bars[currentBarIndex] = { ...currentCandle };
+                                console.log(`API poll: Updated bar at index ${currentBarIndex} in bars array`);
+
+                                // Log the updated bar
+                                console.log('API poll: Updated bar:', bars[currentBarIndex]);
+                            } else {
+                                console.log(`API poll: Could not find current candle in bars array. Current time: ${currentCandle.time}`);
+
+                                // Add it to the bars array
+                                bars.push({ ...currentCandle });
+                                // Sort bars by time (ascending)
+                                bars.sort((a, b) => a.time - b.time);
+                                console.log(`API poll: Added current candle to bars array, now has ${bars.length} bars`);
+                            }
+
+                            // Force a chart update
+                            console.log('API poll: Forcing chart update');
+                            drawChart();
+
+                            // Also trigger a custom event for other components
+                            document.dispatchEvent(new CustomEvent('priceUpdated', {
+                                detail: { price: price, time: new Date().toISOString(), source: 'api-poll' }
+                            }));
+                        } else {
+                            console.log(`API poll: Price unchanged at ${price}`);
+                        }
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching latest price from Bitstamp API:', error);
+            });
+    }, 5000); // Poll every 5 seconds
+})();

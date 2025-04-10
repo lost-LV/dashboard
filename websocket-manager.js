@@ -6,14 +6,16 @@ class WebSocketManager {
         this.ws = null;
         this.handlers = {};
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 10;
-        this.baseReconnectDelay = 1000;
+        this.maxReconnectAttempts = 20; // Increased from 10 to 20
+        this.baseReconnectDelay = 500; // Reduced from 1000 to 500ms for faster reconnection
         this.heartbeatInterval = null;
         this.pingInterval = null;
         this.lastPingTime = null;
         this.latency = null; // Store latency in milliseconds
         this.latencyHistory = []; // Store recent latency measurements
         this.maxLatencyHistory = 10; // Keep last 10 measurements for averaging
+        this.connectionHealthCheckInterval = null; // New interval for connection health checks
+        this.lastMessageTime = Date.now(); // Track when the last message was received
         this.connect();
     }
 
@@ -35,6 +37,9 @@ class WebSocketManager {
 
         this.ws.onmessage = (event) => {
             try {
+                // Update last message time for health check
+                this.lastMessageTime = Date.now();
+
                 const data = JSON.parse(event.data);
 
                 // Handle ping/pong for latency measurement
@@ -115,12 +120,19 @@ class WebSocketManager {
     }
 
     subscribe(channel, handler) {
+        console.log(`Subscribing to ${this.exchange} channel: ${channel}`);
         if (!this.handlers[channel]) {
             this.handlers[channel] = [];
             this.sendSubscription(channel);
         }
         if (!this.handlers[channel].includes(handler)) {
             this.handlers[channel].push(handler);
+        }
+
+        // If the WebSocket is not open, reconnect
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.log(`WebSocket not open, reconnecting for ${channel}`);
+            this.connect();
         }
     }
 
@@ -153,6 +165,8 @@ class WebSocketManager {
 
     startHeartbeat() {
         this.stopHeartbeat();
+
+        // Send heartbeat every 15 seconds (reduced from 30s)
         this.heartbeatInterval = setInterval(() => {
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 const pingMessage = this.exchange === 'bitstamp'
@@ -160,10 +174,43 @@ class WebSocketManager {
                     : { op: 'ping' };
                 this.ws.send(JSON.stringify(pingMessage));
             }
-        }, 30000);
+        }, 15000);
 
         // Start more frequent pings for latency measurement
         this.startLatencyMeasurement();
+
+        // Start connection health check
+        this.startConnectionHealthCheck();
+    }
+
+    // New method to check connection health and force reconnect if needed
+    startConnectionHealthCheck() {
+        if (this.connectionHealthCheckInterval) {
+            clearInterval(this.connectionHealthCheckInterval);
+        }
+
+        this.connectionHealthCheckInterval = setInterval(() => {
+            const now = Date.now();
+            const messageAge = now - this.lastMessageTime;
+
+            // If no messages received in 30 seconds, force reconnect
+            if (messageAge > 30000) {
+                console.warn(`${this.name} (${this.exchange}) connection appears stale. No messages in ${messageAge/1000}s. Forcing reconnect...`);
+
+                // Force close and reconnect
+                if (this.ws) {
+                    try {
+                        this.ws.close();
+                    } catch (e) {
+                        console.error('Error closing stale connection:', e);
+                    }
+                }
+
+                // Reset connection
+                this.cleanup();
+                this.connect();
+            }
+        }, 10000); // Check every 10 seconds
     }
 
     startLatencyMeasurement() {
@@ -253,6 +300,16 @@ class WebSocketManager {
 
     cleanup() {
         this.stopHeartbeat();
+
+        // Clear connection health check interval
+        if (this.connectionHealthCheckInterval) {
+            clearInterval(this.connectionHealthCheckInterval);
+            this.connectionHealthCheckInterval = null;
+        }
+
+        // Reset last message time to now to avoid immediate reconnect
+        this.lastMessageTime = Date.now();
+
         if (this.ws) {
             this.ws.onopen = null;
             this.ws.onmessage = null;

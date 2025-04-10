@@ -3,13 +3,82 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BTC/USDT: Loading...</title>
+    <title>Loading...</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="sidebar.css">
     <link rel="stylesheet" href="top-sidebar.css">
     <link rel="stylesheet" href="connection-meter.css">
     <link rel="stylesheet" href="timeframe-selector.css">
+    <link rel="stylesheet" href="line-drawing.css">
+    <link rel="stylesheet" href="volume-profile.css">
+    <link rel="stylesheet" href="measurement-tool.css">
+    <link rel="stylesheet" href="live-price.css">
+    <link rel="stylesheet" href="whale-watcher-buttons.css">
     <style>
+
+        /* Coin indicator styles for top bar */
+        #coin-indicator-top-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            height: 24px;
+            background-color: rgba(31, 41, 55, 0.95);
+            border: 1px solid #F7931A;
+            border-radius: 4px;
+            padding: 0 12px;
+            z-index: 5; /* Lower z-index to not interfere with other elements */
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            flex: 0 0 auto; /* Don't grow or shrink */
+            min-width: 70px; /* Ensure enough space for icon and text */
+        }
+
+        /* Top sidebar section containers */
+        #top-sidebar-left, #top-sidebar-middle, #top-sidebar-right {
+            display: flex;
+            align-items: center;
+            height: 100%;
+        }
+
+        #top-sidebar-left {
+            justify-content: flex-start;
+            flex: 1;
+        }
+
+        #top-sidebar-middle {
+            justify-content: center;
+            flex: 1;
+        }
+
+        #top-sidebar-right {
+            justify-content: flex-end;
+            flex: 1;
+        }
+
+        #coin-symbol-top-bar {
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #coin-symbol-top-bar img {
+            vertical-align: middle;
+            margin-right: 5px;
+        }
+
+        /* Made by text styles for version display */
+        #made-by-text-version {
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.6);
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+        }
+
         /* Top right corner background fix */
         #top-right-background-fix {
             position: fixed;
@@ -70,6 +139,8 @@
     </style>
 </head>
 <body style="background-color: #131722;">
+    <!-- Removed coin indicator and made by text from here - moved to top bar and version display -->
+
     <!-- Fixed overlay for the top right corner with left border for separator -->
     <div id="top-right-background-fix"></div>
 
@@ -100,16 +171,16 @@
             </div>
         </div>
         <div class="timeframe-selector-container">
-            <div class="timeframe-selector-label">Timeframe:</div>
             <div class="timeframe-button-group">
                 <button class="timeframe-button" data-timeframe="1">1m</button>
                 <button class="timeframe-button active" data-timeframe="5">5m</button>
                 <button class="timeframe-button" data-timeframe="15">15m</button>
+                <button class="timeframe-button" data-timeframe="60">1h</button>
             </div>
         </div>
     </div>
     <div id="container">
-        <div id="coin-indicator"></div>
+        <!-- Removed coin indicator from chart, keeping only the one in top bar -->
         <div id="sidebar">
             <div class="sidebar-header">Longs vs Shorts</div>
             <div class="imbalance-container">
@@ -185,16 +256,21 @@
     <script src="websocket-manager.js"></script>
     <script src="coin-manager.js"></script>
     <script src="liquidations.js"></script>
+    <script src="audio-manager.js"></script>
+    <script src="audio-settings.js"></script>
     <script src="color-customizer-new.js"></script>
     <script src="sidebar.js"></script>
     <script src="version.js"></script>
     <script src="updater.js"></script>
     <script src="init-updater.js"></script>
+    <script src="custom-slider.js"></script>
     <script src="script.js"></script>
     <script src="coin-indicator.js"></script>
     <script src="connection-meter.js"></script>
-    <script src="test-updater.js"></script>
     <script src="timeframe-selector-direct.js"></script>
     <script src="fullscreen.js"></script>
+    <script src="whale-watcher.js"></script>
+    <script src="real-time-updater.js"></script>
+    <script src="whale-watcher-settings.js"></script>
 </body>
 </html>

@@ -86,9 +86,6 @@
             // Connect only to Bybit WebSocket for liquidations
             this.connectToBybitWebSocket();
 
-            // Simulated liquidations are disabled - only using real liquidations
-            // this.setupSimulatedLiquidations();
-
             // Listen for liquidation events for all supported coins
             config.supportedCoins.forEach(pair => {
                 window.addEventListener(`liquidation-${pair}`, (event) => {
@@ -158,12 +155,7 @@
             console.log(`Switched to showing liquidations for ${this.pair}. Have ${this.liquidations.length} liquidations for this coin.`);
         }
 
-        // Generate test liquidations for all coins - disabled to only show real liquidations
-        generateTestLiquidationsForAllCoins() {
-            console.log('Test liquidations are disabled - only showing real liquidations from Bybit');
-            // No test liquidations will be generated
-            return;
-        }
+
 
         // Binance WebSocket connection removed - using only Bybit for liquidations
 
@@ -189,8 +181,6 @@
 
                 // Log subscription message for debugging
                 console.log('Sent Bybit subscription message:', subscribeMsg);
-
-                // No test liquidations - only using real liquidations now
             };
 
             // Process Bybit liquidation messages
@@ -244,46 +234,9 @@
             };
         }
 
-        setupSimulatedLiquidations() {
-            // Simulated liquidations are disabled to only show real liquidations
-            console.log('Simulated liquidations are disabled - only showing real liquidations from Bybit');
-            // No simulated liquidations will be generated
-        }
 
-        generateRealisticLiquidation(currentPrice, isSell, time) {
-            // Always use Bybit as the exchange
-            const exchange = 'bybit';
 
-            // Get current coin configuration
-            const minSize = config.minIndividualLiquidationSize;
-            const scaleFactor = config.valueScaleFactor;
 
-            // Size for liquidations, scaled based on the coin's value
-            let baseSize = (Math.random() * 2 + 1.5) / scaleFactor; // Original values
-
-            // Adjust size based on side (sells tend to be larger)
-            const size = isSell ? baseSize * 1.2 : baseSize; // Original values
-
-            // Price is slightly beyond the current price (that's why it liquidated)
-            const priceOffset = isSell ? -50 - Math.random() * 100 : 50 + Math.random() * 100;
-            const price = currentPrice + priceOffset;
-
-            const liquidation = {
-                time: time,
-                price: price,
-                size: size,
-                side: isSell ? "Sell" : "Buy",
-                exchange: exchange,
-                pair: this.pair, // Include the pair in the liquidation object
-                dollarValue: price * size // Add dollar value for filtering
-            };
-
-            // Dispatch the liquidation event
-            const event = new CustomEvent(`liquidation-${this.pair}`, {
-                detail: liquidation
-            });
-            window.dispatchEvent(event);
-        }
 
         addLiquidation(liq, pair) {
             // Validate liquidation data
@@ -315,11 +268,9 @@
 
             const dollarValue = liq.price * liq.size; // Calculate dollar value
 
-            // Filter out small liquidations
-            if (liq.size < config.minIndividualLiquidationSize || dollarValue < config.minIndividualDollarValue) {
-                // Silently skip small liquidations
-                return;
-            }
+            // We'll capture all liquidations regardless of size
+            // The filtering will happen in the updateMarkers method
+            // This ensures we don't miss any liquidations
 
             // Validate that the liquidation time is reasonable (not in the future)
             const now = Date.now();
@@ -396,14 +347,44 @@
             // Log the accepted liquidation
             console.log(`Added liquidation for ${liquidationPair}: ${liq.size.toFixed(2)} ${coinSymbol} ($${dollarValue.toFixed(0)}) - ${liq.side} - ${liq.exchange}`);
 
+            // Get the current audio threshold from audio manager or use default 1M
+            const audioThreshold = window.audioManager ? window.audioManager.threshold : 1000000;
+
+            // Play audio notification and show visual notification for large liquidations (above threshold)
+            if (dollarValue >= audioThreshold) {
+                console.log(`Large liquidation detected: ${formatDollarValue(dollarValue)}`);
+
+                // Play audio notification if audio manager is available
+                if (window.audioManager) {
+                    window.audioManager.playLiquidationSound(liq.side, dollarValue);
+                }
+
+                // Show visual notification with threshold in the message
+                const thresholdText = audioThreshold >= 1000000 ?
+                    `$${(audioThreshold / 1000000).toFixed(1)}M` :
+                    `$${(audioThreshold / 1000).toFixed(0)}K`;
+
+                const notificationMessage = `Large ${liq.side === 'Buy' ? 'short' : 'long'} liquidation: ${formatDollarValue(dollarValue)} at ${liq.price.toFixed(1)}`;
+
+                // Use the showNotification function if available
+                if (typeof window.showNotification === 'function') {
+                    window.showNotification(notificationMessage, 3000);
+                } else if (typeof window.domUtils !== 'undefined' && typeof window.domUtils.showNotification === 'function') {
+                    window.domUtils.showNotification(notificationMessage, 3000);
+                } else {
+                    // Fallback to alert if no notification function is available
+                    console.log('No notification function available, showing alert');
+                    alert(notificationMessage);
+                }
+            }
+
             // Limit the number of stored liquidations for this coin
             if (coinLiquidations.length > config.maxLiquidations) {
                 coinLiquidations.shift();
             }
         }
 
-        aggregateLiquidations() {
-            const aggregated = new Map();
+        getLiquidations() {
             const now = Date.now();
 
             // Get the liquidations for the current pair
@@ -416,92 +397,69 @@
 
             console.log(`Filtering liquidations for ${this.pair}: ${currentPairLiquidations.length} total, ${recentLiquidations.length} recent`);
 
-            recentLiquidations.forEach((liq) => {
-                // The time should already be aligned with bar intervals, but let's ensure it
-                const barTime = liq.time; // Already aligned in addLiquidation
-                if (!aggregated.has(barTime)) {
-                    aggregated.set(barTime, {
-                        sellDollars: 0,
-                        buyDollars: 0,
-                        bybitSellDollars: 0,
-                        bybitBuyDollars: 0,
-                        liquidations: [] // Store individual liquidations for hover details
-                    });
-                }
-                const agg = aggregated.get(barTime);
-
-                // Add to total dollars by side
-                if (liq.side === "Sell") {
-                    agg.sellDollars += liq.dollarValue;
-
-                    // Add to exchange-specific totals (only Bybit now)
-                    if (liq.exchange === 'bybit') {
-                        agg.bybitSellDollars += liq.dollarValue;
-                    }
-                } else if (liq.side === "Buy") {
-                    agg.buyDollars += liq.dollarValue;
-
-                    // Add to exchange-specific totals (only Bybit now)
-                    if (liq.exchange === 'bybit') {
-                        agg.bybitBuyDollars += liq.dollarValue;
-                    }
-                }
-
-                // Store the liquidation for hover details
-                agg.liquidations.push(liq);
-            });
-            return aggregated;
+            return recentLiquidations;
         }
 
         updateMarkers() {
-            const aggregated = this.aggregateLiquidations();
+            const liquidations = this.getLiquidations();
             this.markers = [];
 
-            // No need to reset any flags since we always show the text
+            console.log(`Updating markers with ${liquidations.length} individual liquidations`);
 
-            console.log(`Updating markers with ${aggregated.size} aggregated time periods`);
+            // Group liquidations by time and side only (not by price)
+            const liquidationGroups = new Map();
 
-            // We only want to show recent liquidations, so we don't add test data if none are found
-            // This ensures only new liquidations are displayed
+            // Process each liquidation individually
+            liquidations.forEach((liq) => {
+                // Skip liquidations below the threshold
+                if (liq.dollarValue < config.minDollarThreshold) {
+                    return;
+                }
 
-            aggregated.forEach((agg, barTime) => {
-                // Total liquidation values for the bar
-                const totalSellDollars = agg.sellDollars;
-                const totalBuyDollars = agg.buyDollars;
+                // Create a key for grouping by time and side only
+                const groupKey = `${liq.time}-${liq.side}`;
 
-                // Exchange breakdown for hover info (only Bybit now)
-                const bybitSellDollars = agg.bybitSellDollars || 0;
-                const bybitBuyDollars = agg.bybitBuyDollars || 0;
+                if (!liquidationGroups.has(groupKey)) {
+                    liquidationGroups.set(groupKey, []);
+                }
 
-                // Sell liquidation marker (below bar) - show if total exceeds threshold
-                if (totalSellDollars >= config.minDollarThreshold) {
-                    // Logarithmic scaling between min and max size based on dollar value (50k to 1M)
-                    // For values at minDollarValue (50k), use minMarkerSize
-                    // For values at or above maxDollarValue (1M), use maxMarkerSize
-                    // For values in between, scale logarithmically for better visual representation
-                    // No scaling factor applied to ensure accurate display
-                    const scaledSellDollars = totalSellDollars; // No scaling factor
-                    const sellSizeFactor = scaledSellDollars >= config.minDollarValue ?
-                        Math.min(
-                            config.maxMarkerSize - config.minMarkerSize,
-                            (Math.log(scaledSellDollars) - Math.log(config.minDollarValue)) /
-                            (Math.log(config.maxDollarValue) - Math.log(config.minDollarValue)) *
-                            (config.maxMarkerSize - config.minMarkerSize)
-                        ) : 0;
+                liquidationGroups.get(groupKey).push(liq);
+            });
 
-                    // Create hover details with exchange breakdown (only Bybit now)
-                    const hoverDetails = {
-                        total: formatDollarValue(totalSellDollars),
-                        bybit: formatDollarValue(bybitSellDollars),
-                        liquidations: agg.liquidations.filter(l => l.side === "Sell")
-                    };
+            // Process each group of liquidations
+            liquidationGroups.forEach((liquidationsInGroup, groupKey) => {
+                // Get the side from the first liquidation in the group
+                const side = liquidationsInGroup[0].side;
+                const time = liquidationsInGroup[0].time;
 
+                // Calculate total dollar value for all liquidations in this group
+                const totalDollarValue = liquidationsInGroup.reduce((sum, liq) => sum + liq.dollarValue, 0);
+
+                // Logarithmic scaling between min and max size based on total dollar value (50k to 1M)
+                const scaledDollars = totalDollarValue;
+                const sizeFactor = scaledDollars >= config.minDollarValue ?
+                    Math.min(
+                        config.maxMarkerSize - config.minMarkerSize,
+                        (Math.log(scaledDollars) - Math.log(config.minDollarValue)) /
+                        (Math.log(config.maxDollarValue) - Math.log(config.minDollarValue)) *
+                        (config.maxMarkerSize - config.minMarkerSize)
+                    ) : 0;
+
+                // Create hover details for the aggregated liquidation
+                const hoverDetails = {
+                    total: formatDollarValue(totalDollarValue),
+                    bybit: formatDollarValue(totalDollarValue),
+                    liquidations: liquidationsInGroup // All liquidations in this group
+                };
+
+                // Set color based on side
+                let color;
+                if (side === "Sell") {
                     // Set color for sell liquidations using customization settings
                     const sellColor = window.colorCustomizer && window.colorCustomizer.colors.sellLiquidationColor || "rgba(220, 50, 50, 1.0)";
                     const sellOpacity = window.colorCustomizer && window.colorCustomizer.opacitySettings.sellLiquidationOpacity || 1.0;
 
                     // Apply opacity to color
-                    let color;
                     if (sellColor.startsWith('rgba')) {
                         // If it's already rgba, extract the RGB components and apply the new opacity
                         const rgbaMatch = sellColor.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
@@ -523,48 +481,12 @@
                         // Fallback
                         color = `rgba(220, 50, 50, ${sellOpacity})`;
                     }
-
-                    this.markers.push({
-                        time: barTime,
-                        position: "above", // Above the price for sell liquidations (longs liquidated)
-                        color: color,
-                        shape: "arrow",
-                        text: formatDollarValue(totalSellDollars), // Show cumulative total
-                        size: config.minMarkerSize + sellSizeFactor,
-                        hoverDetails: hoverDetails, // Add hover details
-                        side: "Sell"
-                    });
-                }
-
-                // Buy liquidation marker (above bar) - show if total exceeds threshold
-                if (totalBuyDollars >= config.minDollarThreshold) {
-                    // Logarithmic scaling between min and max size based on dollar value (50k to 1M)
-                    // For values at minDollarValue (50k), use minMarkerSize
-                    // For values at or above maxDollarValue (1M), use maxMarkerSize
-                    // For values in between, scale logarithmically for better visual representation
-                    // No scaling factor applied to ensure accurate display
-                    const scaledBuyDollars = totalBuyDollars; // No scaling factor
-                    const buySizeFactor = scaledBuyDollars >= config.minDollarValue ?
-                        Math.min(
-                            config.maxMarkerSize - config.minMarkerSize,
-                            (Math.log(scaledBuyDollars) - Math.log(config.minDollarValue)) /
-                            (Math.log(config.maxDollarValue) - Math.log(config.minDollarValue)) *
-                            (config.maxMarkerSize - config.minMarkerSize)
-                        ) : 0;
-
-                    // Create hover details with exchange breakdown
-                    const hoverDetails = {
-                        total: formatDollarValue(totalBuyDollars),
-                        bybit: formatDollarValue(bybitBuyDollars),
-                        liquidations: agg.liquidations.filter(l => l.side === "Buy")
-                    };
-
+                } else { // Buy side
                     // Set color for buy liquidations using customization settings
                     const buyColor = window.colorCustomizer && window.colorCustomizer.colors.buyLiquidationColor || "rgba(0, 200, 200, 1.0)";
                     const buyOpacity = window.colorCustomizer && window.colorCustomizer.opacitySettings.buyLiquidationOpacity || 1.0;
 
                     // Apply opacity to color
-                    let color;
                     if (buyColor.startsWith('rgba')) {
                         // If it's already rgba, extract the RGB components and apply the new opacity
                         const rgbaMatch = buyColor.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
@@ -586,19 +508,23 @@
                         // Fallback
                         color = `rgba(0, 200, 200, ${buyOpacity})`;
                     }
-
-                    this.markers.push({
-                        time: barTime,
-                        position: "below", // Below the price for buy liquidations (shorts liquidated)
-                        color: color,
-                        shape: "arrow",
-                        text: formatDollarValue(totalBuyDollars), // Show cumulative total
-                        size: config.minMarkerSize + buySizeFactor,
-                        hoverDetails: hoverDetails, // Add hover details
-                        side: "Buy"
-                    });
                 }
+
+                // Create a single marker for the entire group of liquidations
+                this.markers.push({
+                    time: time,
+                    position: side === "Sell" ? "above" : "below", // Above for sell, below for buy
+                    color: color,
+                    shape: "arrow",
+                    text: formatDollarValue(totalDollarValue), // Show total value
+                    size: config.minMarkerSize + sizeFactor, // Size based on total value
+                    hoverDetails: hoverDetails,
+                    side: side,
+                    horizontalOffset: 0, // No horizontal offset needed for single arrow
+                    liquidationCount: liquidationsInGroup.length // Store count for hover info
+                });
             });
+
 
             // The markers will be rendered by script.js
             if (window.drawChart) {
@@ -610,6 +536,8 @@
         findBar(timestamp) {
             return { time: timestamp };
         }
+
+
     }
 
     // Initialize liquidations manager immediately
@@ -617,8 +545,6 @@
 
     // Make the liquidation manager globally accessible for debugging
     window.liquidationManager = liquidationManager;
-
-    // Test liquidations functionality removed
 
     // Function to draw live liquidation indicators
     function drawLiveLiquidationIndicators(ctx, bars, getYForPrice, barWidth, viewOffset, liveLiquidations) {
@@ -737,20 +663,21 @@
     let mouseX = null;
     let mouseY = null;
 
-    // Add mouse move listener for hover detection
-    document.addEventListener('mousemove', (e) => {
-        const canvas = document.getElementById('chart');
-        if (!canvas) return;
-        const rect = canvas.getBoundingClientRect();
-        mouseX = e.clientX - rect.left;
-        mouseY = e.clientY - rect.top;
-    });
+    // We'll use the canvas mousemove event from script.js instead of adding our own
+    // This prevents interference with the main chart's event handling
+    // The mouseX and mouseY variables will be updated by the main chart's event handlers
 
     // Expose drawing function for script.js to use
     window.drawLiquidationMarkers = (ctx, bars, getYForPrice, barWidth, viewOffset) => {
         if (!liquidationManager) {
             console.error('Liquidation manager not available');
             return;
+        }
+
+        // Get mouse position from script.js if available
+        if (window.chartMouseX !== undefined && window.chartMouseY !== undefined) {
+            mouseX = window.chartMouseX;
+            mouseY = window.chartMouseY;
         }
 
         // Draw regular liquidation markers for the current pair only
@@ -768,7 +695,7 @@
         hoveredMarker = null;
 
         // Draw each marker regardless of zoom level
-        liquidationManager.markers.forEach(marker => {
+        liquidationManager.markers.forEach((marker, index) => {
             // Find the bar with the exact time match or closest time
             let targetBar = null;
             let minTimeDiff = Infinity;
@@ -815,7 +742,9 @@
 
 
             // Calculate x position based on bar position
-            const x = (barIndex - viewOffset) * barWidth + barWidth / 2;
+            // Apply horizontal offset if specified to stagger arrows
+            const horizontalOffset = marker.horizontalOffset || 0;
+            const x = (barIndex - viewOffset) * barWidth + barWidth / 2 + horizontalOffset;
 
             // Calculate arrow dimensions based on size - scale with liquidation value
             // For 50k liquidations: small arrow
@@ -827,7 +756,8 @@
             const heightMultiplier = window.colorCustomizer && window.colorCustomizer.sizeSettings.liquidationArrowHeight || 1.2;
             const headSizeMultiplier = window.colorCustomizer && window.colorCustomizer.sizeSettings.liquidationArrowHeadSize || 0.6;
 
-            const arrowWidth = size * widthMultiplier; // Width based on settings
+            // Ensure arrows have enough width to prevent visual overlap
+            const arrowWidth = Math.max(size * widthMultiplier, 6); // Width based on settings with minimum width
             const arrowHeight = size * heightMultiplier; // Height based on settings
             const arrowHeadSize = size * headSizeMultiplier; // Head size based on settings
 
@@ -846,22 +776,35 @@
             marker.arrowTop = isAbove ? arrowY : (priceY + 3);
             marker.arrowBottom = isAbove ? priceY : (priceY + arrowHeight + 3);
             marker.arrowWidth = arrowWidth;
+            // Store the horizontal offset for better hover detection
+            marker.horizontalOffset = horizontalOffset;
 
-            // Check if mouse is hovering over this marker (check if mouse is within arrow bounds)
+            // Check if mouse is hovering over this marker
             if (mouseX !== null && mouseY !== null) {
-                const isInXBounds = mouseX >= (x - arrowWidth/2) && mouseX <= (x + arrowWidth/2);
-                const isInYBounds = mouseY >= marker.arrowTop && mouseY <= marker.arrowBottom;
+                // Check if mouse is over the arrow
+                // Account for horizontal offset in hover detection
+                const isInArrowXBounds = mouseX >= (x - arrowWidth/2) && mouseX <= (x + arrowWidth/2);
+                const isInArrowYBounds = mouseY >= marker.arrowTop && mouseY <= marker.arrowBottom;
+                const isOverArrow = isInArrowXBounds && isInArrowYBounds;
 
-                if (isInXBounds && isInYBounds) {
+                // Check if mouse is over the text (if text bounds exist)
+                let isOverText = false;
+                if (marker.textBounds) {
+                    isOverText = mouseX >= marker.textBounds.x &&
+                                mouseX <= (marker.textBounds.x + marker.textBounds.width) &&
+                                mouseY >= marker.textBounds.y &&
+                                mouseY <= (marker.textBounds.y + marker.textBounds.height);
+                }
+
+                // Check if mouse is in a UI area (price scale, time scale, etc.)
+                const isPriceScaleArea = mouseX > ctx.canvas.width - 75; // Add extra margin
+                const isTimeScaleArea = mouseY > ctx.canvas.height - 30; // Add extra margin
+                const isTopBarArea = mouseY < 35; // Top bar area
+
+                // Only set as hovered if mouse is over the element AND not in a UI area
+                if ((isOverArrow || isOverText) && !isPriceScaleArea && !isTimeScaleArea && !isTopBarArea) {
                     hoveredMarker = marker;
                 }
-            }
-
-            // Draw with slightly different style if hovered
-            if (marker === hoveredMarker) {
-                // Draw highlight glow
-                ctx.shadowColor = '#ffffff';
-                ctx.shadowBlur = 10;
             }
 
             // Draw arrow
@@ -896,10 +839,6 @@
 
             ctx.fill();
 
-            // Reset shadow
-            ctx.shadowColor = 'transparent';
-            ctx.shadowBlur = 0;
-
             // Draw text at the opposite end of the arrow
             // Always show the USD value text
             if (marker.text) {
@@ -910,27 +849,94 @@
                 ctx.fillStyle = '#ffffff';
                 ctx.textAlign = 'center';
 
-                // Position text at a safe distance from the arrow to prevent overlap
-                const textY = isAbove ?
-                    arrowY - fontSize/2 - 2 : // For arrows above price, text above arrow with padding
-                    priceY + arrowHeight + fontSize + 2; // For arrows below price, text below arrow with padding
+                // Calculate text width to ensure no overlap with other markers
+                const textWidth = ctx.measureText(marker.text).width;
 
+                // Position text at a safe distance from the arrow to prevent overlap
+                // Add index-based vertical offset to stagger text labels and prevent overlap
+                const textVerticalOffset = index * 3; // Small vertical offset based on index
+                const textY = isAbove ?
+                    arrowY - fontSize - 4 - textVerticalOffset : // For arrows above price, text above arrow with more padding
+                    priceY + arrowHeight + fontSize + 4 + textVerticalOffset; // For arrows below price, text below arrow with more padding
+
+                // Add a background to make text more readable
+                const padding = 2;
+                const textBgWidth = textWidth + padding * 2;
+                const textBgHeight = fontSize + padding * 2;
+                const textBgX = x - textWidth/2 - padding;
+                const textBgY = textY - fontSize + padding;
+
+                // Store text bounds for hover detection
+                marker.textBounds = {
+                    x: textBgX,
+                    y: textBgY,
+                    width: textBgWidth,
+                    height: textBgHeight
+                };
+
+                // Draw text background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(textBgX, textBgY, textBgWidth, textBgHeight);
+
+                // Draw text
+                ctx.fillStyle = '#ffffff';
                 ctx.fillText(marker.text, x, textY);
             }
         });
 
         // Draw hover tooltip if a marker is hovered
         if (hoveredMarker && hoveredMarker.hoverDetails) {
+            // Double-check that mouse is not in a UI area
+            const isPriceScaleArea = mouseX > ctx.canvas.width - 75; // Add extra margin
+            const isTimeScaleArea = mouseY > ctx.canvas.height - 30; // Add extra margin
+            const isTopBarArea = mouseY < 35; // Top bar area
+
+            // Skip tooltip if mouse is in a UI area
+            if (isPriceScaleArea || isTimeScaleArea || isTopBarArea) {
+                hoveredMarker = null;
+                return;
+            }
+
             const details = hoveredMarker.hoverDetails;
             const x = hoveredMarker.renderX;
             const y = hoveredMarker.renderY;
             const side = hoveredMarker.side;
 
-            // Create tooltip
-            const tooltipWidth = 200;
-            const tooltipHeight = 80; // Reduced height since we removed Binance
-            const tooltipX = Math.min(ctx.canvas.width - tooltipWidth - 10, Math.max(10, x - tooltipWidth / 2));
-            const tooltipY = side === "Sell" ? y + 20 : y - tooltipHeight - 20;
+            // Create tooltip - size adjusted for detailed liquidation information
+            const tooltipWidth = 180; // Increased width for more details
+            // Calculate height based on number of liquidations (max 15 to show)
+            const maxToShow = Math.min(details.liquidations.length, 15);
+            const tooltipHeight = Math.min(350, 85 + (maxToShow * 16) + (details.liquidations.length > maxToShow ? 16 : 0)); // Dynamic height with increased max
+
+            // Position tooltip to avoid UI elements
+            let tooltipX = Math.min(ctx.canvas.width - tooltipWidth - 80, Math.max(10, x - tooltipWidth / 2));
+            let tooltipY;
+
+            // Position tooltip based on available space, considering the potentially larger height
+            // For taller tooltips, prefer positioning to the side with more space
+            const spaceAbove = y - 40; // Space above minus top bar
+            const spaceBelow = ctx.canvas.height - 35 - y; // Space below minus time scale
+
+            if (tooltipHeight <= spaceBelow || spaceBelow >= spaceAbove) {
+                // Position below if there's enough space or more space below than above
+                tooltipY = y + 20;
+                // Ensure tooltip doesn't overlap with time scale
+                if (tooltipY + tooltipHeight > ctx.canvas.height - 35) {
+                    tooltipY = ctx.canvas.height - tooltipHeight - 35;
+                }
+            } else {
+                // Position above if there's more space above
+                tooltipY = y - tooltipHeight - 20;
+                // Ensure tooltip doesn't overlap with top bar
+                if (tooltipY < 40) {
+                    tooltipY = 40;
+                }
+            }
+
+            // If tooltip still doesn't fit, position it at the top with some padding
+            if (tooltipY + tooltipHeight > ctx.canvas.height - 35) {
+                tooltipY = Math.max(40, ctx.canvas.height - tooltipHeight - 35);
+            }
 
             // Draw tooltip background
             ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
@@ -939,24 +945,96 @@
             ctx.lineWidth = 2;
             ctx.strokeRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight);
 
-            // Draw tooltip content
-            ctx.font = 'bold 12px Arial';
+            // Draw tooltip content with detailed liquidation information
+            ctx.font = 'bold 11px Arial';
             ctx.fillStyle = '#ffffff';
             ctx.textAlign = 'left';
-            ctx.fillText(`${side} Liquidations: ${details.total}`, tooltipX + 10, tooltipY + 20);
 
-            ctx.font = '11px Arial';
-            ctx.fillText(`Bybit: ${details.bybit}`, tooltipX + 10, tooltipY + 45);
+            // Header with total liquidation value
+            ctx.fillText(`${side} Liquidations: ${details.total}`, tooltipX + 6, tooltipY + 18);
 
-            // Count liquidations
-            const bybitCount = details.liquidations.filter(l => l.exchange === 'bybit').length;
-            ctx.fillText(`(${bybitCount} orders)`, tooltipX + 120, tooltipY + 45);
-
-            // Draw timestamp - use bar time for display
+            // Show count of liquidations in this group
+            const count = hoveredMarker.liquidationCount || details.liquidations.length;
             ctx.font = '10px Arial';
-            const barDate = new Date(hoveredMarker.time);
-            const formattedTime = barDate.toLocaleTimeString();
-            ctx.fillText(`Bar time: ${formattedTime}`, tooltipX + 10, tooltipY + 85);
+            ctx.fillText(`Total Count: ${count}`, tooltipX + 6, tooltipY + 36);
+
+            // Add a separator line
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(tooltipX + 6, tooltipY + 42);
+            ctx.lineTo(tooltipX + tooltipWidth - 6, tooltipY + 42);
+            ctx.stroke();
+
+            // Show individual liquidation details
+            if (details.liquidations && details.liquidations.length > 0) {
+                // Sort liquidations by dollar value (largest first)
+                const sortedLiquidations = [...details.liquidations].sort((a, b) => b.dollarValue - a.dollarValue);
+
+                // Column headers
+                ctx.font = 'bold 9px Arial';
+                ctx.fillText('Amount', tooltipX + 6, tooltipY + 56);
+                ctx.fillText('Price', tooltipX + 80, tooltipY + 56);
+                ctx.fillText('Value', tooltipX + 130, tooltipY + 56);
+
+                // Use the maxToShow value we already calculated
+                ctx.font = '9px Arial';
+
+                for (let i = 0; i < maxToShow; i++) {
+                    const liq = sortedLiquidations[i];
+                    const yPos = tooltipY + 72 + (i * 16);
+
+                    // Get coin symbol for display
+                    let coinSymbol = 'Unknown';
+                    if (liq.pair.includes('BTC')) coinSymbol = 'BTC';
+                    else if (liq.pair.includes('ETH')) coinSymbol = 'ETH';
+                    else if (liq.pair.includes('SOL')) coinSymbol = 'SOL';
+                    else if (liq.pair.includes('LTC')) coinSymbol = 'LTC';
+                    else if (liq.pair.includes('XRP')) coinSymbol = 'XRP';
+
+                    // Format size with appropriate precision based on coin
+                    let sizeDisplay;
+                    if (coinSymbol === 'BTC') {
+                        sizeDisplay = liq.size.toFixed(3);
+                    } else if (coinSymbol === 'ETH') {
+                        sizeDisplay = liq.size.toFixed(2);
+                    } else {
+                        sizeDisplay = liq.size.toFixed(1);
+                    }
+
+                    // Display amount with coin symbol
+                    ctx.fillText(`${sizeDisplay} ${coinSymbol}`, tooltipX + 6, yPos);
+
+                    // Display price
+                    ctx.fillText(`$${liq.price.toFixed(1)}`, tooltipX + 80, yPos);
+
+                    // Display dollar value
+                    ctx.fillText(formatDollarValue(liq.dollarValue), tooltipX + 130, yPos);
+                }
+
+                // If there are more liquidations than we can show
+                if (sortedLiquidations.length > maxToShow) {
+                    const remaining = sortedLiquidations.length - maxToShow;
+                    ctx.fillText(`+ ${remaining} more...`, tooltipX + 6, tooltipY + 72 + (maxToShow * 16));
+
+                    // Draw a simple scrollbar to indicate more content
+                    const scrollbarHeight = Math.min(tooltipHeight - 100, 200);
+                    const scrollbarY = tooltipY + 56;
+                    const scrollThumbHeight = scrollbarHeight * (maxToShow / sortedLiquidations.length);
+
+                    // Draw scrollbar track
+                    ctx.fillStyle = 'rgba(100, 100, 100, 0.3)';
+                    ctx.fillRect(tooltipX + tooltipWidth - 12, scrollbarY, 6, scrollbarHeight);
+
+                    // Draw scrollbar thumb
+                    ctx.fillStyle = 'rgba(200, 200, 200, 0.5)';
+                    ctx.fillRect(tooltipX + tooltipWidth - 12, scrollbarY, 6, scrollThumbHeight);
+                }
+
+                // Show exchange at the bottom
+                const exchangeY = tooltipY + tooltipHeight - 10;
+                ctx.fillText(`Exchange: Bybit`, tooltipX + 6, exchangeY);
+            }
         }
     };
 })();

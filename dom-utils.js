@@ -229,6 +229,9 @@ window.domUtilsReady = false;
         showNotification
     };
 
+    // Also expose showNotification globally for easier access
+    window.showNotification = showNotification;
+
     // Set the ready flag
     window.domUtilsReady = true;
 

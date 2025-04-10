@@ -1,0 +1,36 @@
+.line-drawing-button-container {
+    display: flex;
+    align-items: center;
+    margin-left: 15px;
+    position: relative;
+    flex: 0 0 auto; /* Don't grow or shrink */
+}
+
+/* Ensure the button is properly styled as a standalone button */
+#line-drawing-toggle-button {
+    border-radius: 4px !important;
+    height: 24px !important;
+    padding: 0 10px !important;
+    font-size: 12px !important;
+    background-color: #2a2e39;
+    color: #aaa;
+    border: 1px solid #3a3f4c;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    /* Match timeframe button styling */
+    margin: 0;
+}
+
+#line-drawing-toggle-button.active {
+    /* Let JavaScript handle the active state styling */
+}
+
+#line-drawing-toggle-button:hover:not(.active) {
+    background-color: #333942;
+}
+
+#line-drawing-toggle-button.active:hover {
+    /* Let JavaScript handle the active hover state */
+    opacity: 0.9;
+}
